@@ -307,6 +307,37 @@ local function charm_collect_shadow_creatures(x, y, z)
 	return ents
 end
 
+-- Periodic tick (runs only while equipped): consume one fuel piece when the charge
+-- ratio drops below the threshold for the fuel type in the first occupied slot.
+--   nightmarefuel: adds 25 % → refuel at < 75 %
+--   horrorfuel:    adds 50 % → refuel at < 50 %
+local function charm_auto_refuel_tick(inst)
+	if inst.components.fueled == nil or inst.components.container == nil then return end
+	local f = inst.components.fueled
+	local _, item = charm_find_fuel_slot(inst)
+	if item == nil then return end
+	local threshold =
+		(item.prefab == "nightmarefuel" and CHARM_REFUEL_THRESHOLD_NIGHTMARE) or
+		(item.prefab == "horrorfuel"    and CHARM_REFUEL_THRESHOLD_HORROR)    or
+		nil
+	if threshold == nil then return end
+	while f.currentfuel / f.maxfuel < threshold do
+		local added = charm_consume_one_from_container(inst)
+		if added <= 0 then break end
+		f:DoDelta(added)
+	end
+end
+
+-- Unified handler for all non-time-triggered fuel costs.
+-- Deducts ratio * maxfuel, then immediately runs the refuel check so the
+-- container compensates for the loss where possible.
+local function charm_spend_fuel(inst, ratio)
+	local f = inst.components.fueled
+	if f == nil then return end
+	f:DoDelta(-(f.maxfuel * ratio))
+	charm_auto_refuel_tick(inst)
+end
+
 local function charm_apply_terrorbeak_fuel_cost(inst)
 	if inst:IsValid() then
 		charm_spend_fuel(inst, CHARM_TERRORBEAK_DURABILITY_LOSS)
@@ -382,37 +413,6 @@ local function charm_fuel_mult(inst, fuel_obj)
 		return (0.50 * maxf) / fv
 	end
 	return 1
-end
-
--- Periodic tick (runs only while equipped): consume one fuel piece when the charge
--- ratio drops below the threshold for the fuel type in the first occupied slot.
---   nightmarefuel: adds 25 % → refuel at < 75 %
---   horrorfuel:    adds 50 % → refuel at < 50 %
-local function charm_auto_refuel_tick(inst)
-	if inst.components.fueled == nil or inst.components.container == nil then return end
-	local f = inst.components.fueled
-	local _, item = charm_find_fuel_slot(inst)
-	if item == nil then return end
-	local threshold =
-		(item.prefab == "nightmarefuel" and CHARM_REFUEL_THRESHOLD_NIGHTMARE) or
-		(item.prefab == "horrorfuel"    and CHARM_REFUEL_THRESHOLD_HORROR)    or
-		nil
-	if threshold == nil then return end
-	while f.currentfuel / f.maxfuel < threshold do
-		local added = charm_consume_one_from_container(inst)
-		if added <= 0 then break end
-		f:DoDelta(added)
-	end
-end
-
--- Unified handler for all non-time-triggered fuel costs.
--- Deducts ratio * maxfuel, then immediately runs the refuel check so the
--- container compensates for the loss where possible.
-local function charm_spend_fuel(inst, ratio)
-	local f = inst.components.fueled
-	if f == nil then return end
-	f:DoDelta(-(f.maxfuel * ratio))
-	charm_auto_refuel_tick(inst)
 end
 
 local function charm_cancel_refuel_task(inst)
