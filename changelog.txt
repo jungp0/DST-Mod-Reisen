@@ -1,0 +1,91 @@
+Reisen Udongein Inaba | Touhou Project
+
+Changelog (Last Update: 04.05.2026 - Version 3.0.12)
+
+Version 3.0.12 - Crockpot / monster dishes: `is_heavy_monster_food` now accepts either the `monstermeat` or `monster` prefab tag (still MEAT + HP/sanity ≤ −20). Some crockpot results only carry `monster`, so the instant boosted-state path could miss them before; comments aligned with the check.
+  [中文] 烹饪锅等成品怪物料理：`is_heavy_monster_food` 现同时认可 `monstermeat` 与 `monster` 标签（仍为肉类且生命/理智惩罚达到阈值）。部分锅产出仅带 `monster`，此前可能无法走「直接狂暴」分支；相关注释已与逻辑一致。
+
+Version 3.0.11 - Documented and clarified kill-HP pool settlement when lunatic stack hits zero (`reisen_apply_kill_hp_accum` after boosted exit): heal stays `accum × RELEASE_HEAL_BOOSTED_SELF_MULT` with no `damagemultiplier` divisor—intentionally stronger than Mind Blowing cast boosted self-heal, which still uses `accum × mult / damagemultiplier` in `modmain`. `reisen_consts` comment distinguishes the two paths.
+  [中文] 明确击杀累积池在狂暴结束、层数清零时（`reisen_apply_kill_hp_accum`）的治疗为 `accum × RELEASE_HEAL_BOOSTED_SELF_MULT`，不按战斗伤害倍率除算；与 modmain 心爆释放时的狂暴自疗公式有意区分开。`reisen_consts` 注释区分两条路径。
+
+Version 3.0.10 - Mind Blowing (`ReleaseHeal` Mode A): self-heal now scales as `accum × (1 / damagemultiplier)` in normal form and `accum × REISEN_RELEASE_HEAL_BOOSTED_SELF_MULT / damagemultiplier` when boosted (`reisen_consts` documents removal of the old flat self-fraction knob). AoE `FindEntities` excludes players/ghosts and skips walls/structures and mobs led by players; fear plus Slow-Field-grade slow apply to valid combat targets. Mode B Slow Field: zero-damage `GetAttacked` for on-hit hooks, guarded by `_reisen_no_stack_aoe` so `reisen_on_hit_other` does not award stacks; paying stack cost syncs net and pushes `reisen_stats_dirty` for immediate tier refresh. `reisen_sanitydots`: sanity 0 / 100 edge states use fixed crimson/gold tints with no pulse loop; steady states only retint on threshold change (lighter HUD work).
+  [中文] 心爆（右键释放 Mode A）：自疗改为按 `accum / damagemultiplier`（狂暴再乘 `RELEASE_HEAL_BOOSTED_SELF_MULT`），高输出角色自疗更低；常量中已去掉固定自疗比例。范围选取排除玩家/幽灵，并跳过墙类、建筑及被玩家带领的随从；对目标施加恐惧与同级减速。减速场（Mode B）：零伤 `GetAttacked` 触发受击回调，`_reisen_no_stack_aoe` 锁住叠层；扣层后同步网络并 `reisen_stats_dirty` 立即刷新档位。`reisen_sanitydots`：0%/100% 为固定深红/金色无脉冲，平时仅在分档变化时重染 tint。
+
+Version 3.0.9 - Maintainer tooling: `tools/package_release.ps1` stamps via `stamp_version.ps1` (UTF-8 no BOM) and copies `anim`, `bigportraits`, `images`, `scripts`, and root mod files into `mods/reisen_release` for Steam Workshop; safe when invoked from Git Bash (avoids `cmd.exe /c` hanging from MSYS path mangling). `make_release.bat` remains for double-click/cmd use and documents the Git Bash pitfall.
+  [中文] 维护工具链：`package_release.ps1` 调用 `stamp_version.ps1` 写入版本与 changelog 页眉页脚，并同步资源到 `reisen_release`，可从 Git Bash 直接调用 `powershell -File`（避免 Git Bash 下 `cmd /c` 卡死）。`make_release.bat` 仍可供本机双击/cmd，并注明上述限制。
+
+Version 3.0.8 - Client HUD: `reisen_sanitydots` adds a three-moon-dot column left of `reisen_lunarbadge`, stepping light dots from the bottom at 25/50/75% sanity with dusty-rose pulse at 0% and gold pulse at 100% plus boundary tint softening between dark and light palettes. modmain defers badge/dot positioning one frame so other `AddClassPostConstruct("widgets/statusdisplays")` hooks run first; when Combined Status is active (`GLOBAL.TUNING.COMBINED_STATUS_UNIT`), uses its stack at (-62,-52) and offsets dots by 41 px left, otherwise the default `column5` lunar slot.
+  [中文] 客户端 HUD：新增 `reisen_sanitydots`，在月相徽章左侧以三个月亮点按 25/50/75% 从下至上点亮，0% 与 100% 有粉/金脉冲，明暗交界做过渡调色。modmain 延迟一帧安放徽章与圆点以兼容其他状态栏构造；检测到 Combined Status（`COMBINED_STATUS_UNIT`）时使用 (-62,-52) 并将圆点左偏 41，否则沿用默认 `column5` 月相槽位。
+
+Version 3.0.7 - Performance tooling (`scripts/reisen_perf.lua`): opt-in console `GLOBAL.ReisenPerf(true|false|"dump")` with near-zero overhead when disabled; optional counters/time windows on `reisen.lunatic`/net sync, lunar badge HUD ticks, charm/dual-gear night tasks, right-click Mind Blowing / Slow Field (`release_heal`), and boosted pickup sweeps wired from `modmain`. reisen prefab: `reisen_on_hit_other` throttles lunatic stack gains to one per `REISEN_HIT_THROTTLE_INTERVAL` (0.1s) against helper/latency burst while `_reisen_skill_aoe` releases still omit stack credit; evil-petal eats refresh/kill petal-ring FX spawn a one-shot `ghostlyelixir_player_slowregen_fx` burst; full moon while boosted skips lunatic stack decay until the moon ends.
+  [中文] 性能：`reisen_perf` 可选 `ReisenPerf` 控制台（默认关闭、开销极低），开启后对狂暴循环、网络 HUD、月夜徽章、丝带/夜间任务、右键心爆或减速场、狂暴拾取等打点。角色：`reisen_on_hit_other` 以约 0.1s 节流叠层以防连点/助手类 RPC；心爆与减速场仍可经 `_reisen_skill_aoe` 不叠层；吃邪恶花瓣重置符文并喷发一次慢疗反馈特效；满月且狂暴时令狂暴层不降直至满月结束。
+
+Version 3.0.6 - Adds consumable Dark Moon Salve (`reisen_ointment`, Reisen-only Shadow Manipulator recipe): immediate heal/shadow-attunement cost, Lunacy Enlightenment ward with `sanity:EnableLunacy` and forcefield-style `reisen_ointmentfx`; buff clears on attacked or death. Companion FX: `reisen_boostfx` parents a looping `merm_shadow_fx` aura in boosted state; `reisen_petalring` shows a `shadow_trap_debuff` ground rune while the evil-petal stack buff from eating evil petals/tea is active (`reisen_evil_petals_stack_gain`); `reisen_critfx` ramps subtle `shadow_fire_fx` intensity with boosted crit-progress in the max-stack zone.
+  [中文] 新增消耗品「暗黑月软膏」`reisen_ointment`（铃仙专属、暗影操纵者）：瞬时治疗与理智消耗，`sanity:EnableLunacy` 启蒙护佑配合 `reisen_ointmentfx` 护盾类特效；受击或死亡解除。顺带加入狂暴态 `reisen_boostfx`（`merm_shadow_fx`）、邪恶花瓣增益时的地表符文 `reisen_petalring`（`shadow_trap_debuff`）、狂暴满层暴击蓄力过程的 `reisen_critfx`（`shadow_fire_fx`）指示。
+
+Version 3.0.5 - Audio and VFX polish: modmain Mind Blowing applies `sanity_lower` per hit, caster `maxwell_rework/shadow_magic/cast` plus `attune_out_fx`, and `moonpulse_fx` / `moonpulse2_fx` on the target by boost; Slow Field uses `dontstarve/common/nightmareAddFuel`, `attune_out_fx`, and `slingshot_aoe_fx` (slow tint); `ReisenApplySlow` spawns `ghostlyelixir_slowregen_dripfx` on affected mobs. reisen prefab: seasonal tail grant plays a short `dontstarve/wilson/shave_LP`; entering boost spawns `ghostlyelixir_player_slowregen_fx` with matching sound; kill-HP accumulation bumps coalesce to one `attune_in_fx` per frame.
+  [中文] 音效与特效：心爆对每名受击目标追加 `sanity_lower`，施法者播放暗影施法音与 `attune_out_fx`，目标处按是否狂暴使用 `moonpulse_fx` / `moonpulse2_fx`；减速场使用噩梦燃料音效、`attune_out_fx` 与染色 `slingshot_aoe_fx`；减速应用时为实体挂上 `ghostlyelixir_slowregen_dripfx`。角色：换毛得尾时播放短促剃毛循环音；进入狂暴生成 `ghostlyelixir_player_slowregen_fx` 及配套音效；击杀累积池增长在同一帧合并为一次 `attune_in_fx`。
+
+Version 3.0.4 - reisen prefab: boosted-state bonus healing in `reisen_on_healthdelta` skips the extra `DoDelta` when health is already full, aligning with the periodic regen guard in 3.0.2 and avoiding spurious `healthdelta` / +0 heal noise for other mods.
+  [中文] 角色预制：狂暴状态下治疗加成在已满血时不再追加 `DoDelta`，与 3.0.2 周期回血满血跳过一致，减少对其他模组产生的多余 `healthdelta` / “+0 治疗”干扰。
+
+Version 3.0.3 - modmain: REISEN_RELEASE_HEAL stategraph handler always returns `castspellmind` on server and client for both Mind Blowing and Slow Field, fixing multiplayer animation freezes when `_reisen_kill_hp_accum_net` is briefly stale and the two sides used to pick mismatched states (`castspellmind` vs `throw`).
+  [中文] modmain：右键释放统一进入 `castspellmind`，修复击杀池网络变量延迟时服务端与客户端动画状态不一致导致的联机动作卡死。
+
+Version 3.0.2 - "Release Mind Blowing" and kill-HP pool: reisen_consts adds tunables for right-click release (Mind Blowing vs Slow Field: radii, fear/slow duration, sanity costs, stack cost), kill accumulation cap and KILL_HP_PER_KILL, and CHARM_SHADOW_OVERWHELM_THRESHOLD; reisen prefab syncs kill pool via a net byte and applies pool on carrot-eat from boosted; modmain implements the custom action, AoE, and cost routing; periodic health regen skips DoDelta at full health to avoid spurious +0 ticks for other mods.
+  [中文] 右键「Release Mind Blowing」与击杀累积池：reisen_consts 增加释放（心爆/减速场：范围、恐惧/减速时长、理智与层数消耗）、击杀累计上限与每层击杀回池、及幻视丝带面对大量暗影的阈值；角色预制以网络字节同步累计池，狂暴状态下吃胡萝卜时结算；modmain 实现自定义行动与范围效果；周期回血在满血时不触发 DoDelta，减少对其他模组的“+0 生命”干扰。
+
+Version 3.0.1 - Centralized balance knobs in scripts/reisen_consts.lua (lunatic LOW/MID/HI stacks, hunger bands, dual-gear shadow spawn interval); reisen character prefab, reisen_casual, lunar HUD badge, and modmain all require it so UI tiers and combat rules stay in sync. Lunatic MID threshold is 4 for sanity-on-damage conversion and related relief.
+  [中文] 将可调参数集中到 scripts/reisen_consts.lua（狂暴层低/中/高、饥饿分段、双装备夜间暗影间隔）；角色预制、休闲装、月相 HUD 徽章与 modmain 共用，保证界面与机制一致；狂暴 MID 阈值为 4，用于受伤转理智等效果。
+
+Version 3.0.0 - Major milestone release: consolidates all 2.x gear prefabs (reisen_uniform, reisen_casual, reisen_charm), seasonal molting mechanics, lunar-phase sanity system, full i18n pipeline (reisen_i18n), and automated release toolchain; make_release.bat now accepts a version argument and auto-patches modinfo.lua and changelog.txt.
+  [中文] 重大里程碑版本：整合全部 2.x 装备预制件（月夜制服、休闲装、幻视丝带）、季节换毛机制、月相理智系统、完整 i18n 流程（reisen_i18n），以及自动化发版工具链；make_release.bat 现支持版本号参数，可自动更新 modinfo.lua 与 changelog.txt。
+
+Version 2.0.20 - Release: bumped mod version and refreshed changelog for Steam Workshop packaging.
+  [中文] 发版：提升模组版本号并更新变更日志，用于 Steam 创意工坊打包发布。
+
+Version 2.0.19 - reisen_uniform: move-speed tiers now use locomotor:SetExternalSpeedMultiplier for immediate classified net sync; per-hit sanity loss listens for DST's onhitother on the attacker; prefab header documents stats, penalties, knockback-at-san-0 (heavyarmor), and hunger interaction. reisen_casual: matching prefab overview header for maintainers.
+  [中文] 月夜制服：移速档位改用 locomotor:SetExternalSpeedMultiplier，便于联机即时同步；每次命中扣理智改为监听攻击方的 onhitother；文件头补充数值、惩罚、理智为 0 时的重甲击退与饥饿交互说明。休闲装：补充与制服风格一致的结构化说明头。
+
+Version 2.0.18 - Seasonal molting: sanity gate now requires sanity above 0 (was 50% max sanity); hunger gate unchanged (still uses REISEN_HUNGER_THRESHOLD).
+  [中文] 季节换毛：理智条件改为必须大于 0（原为理智上限的 50%）；饥饿条件仍为 REISEN_HUNGER_THRESHOLD，与上一版一致。
+
+Version 2.0.17 - Release: bumped mod version and refreshed changelog for Steam Workshop packaging.
+  [中文] 发版：提升模组版本号并更新变更日志，用于 Steam 创意工坊打包发布。
+
+Version 2.0.16 - modmain: wearing reisen_charm now drives cleaner client insanity handling (GoInsane respects server replica when suppression may apply); hunger-at-zero and full-moon edges refresh charm sanity hooks; night shadow spawn tasks stop on unequip and equip resets transition speech state.
+  [中文] modmain：佩戴幻视丝带时客户端疯癫表现与服务器 replica 对齐更稳妥；饥饿归零与满月边界会刷新相关理智逻辑；卸下装备会停止夜间暗影生成任务，装备时重置过渡台词状态。
+
+Version 2.0.15 - reisen_charm: fixed dapperness stacking when unequipping other sanity gear while the choker is worn (snapshot no longer drops base dapperness); reisen_i18n expanded scrapbook / item / character strings.
+  [中文] 幻视丝带：修复佩戴期间卸下其他理智装备时 dapperness 叠加异常（快照不再错误丢失基础值）；reisen_i18n 扩充图鉴、物品与角色相关文案。
+
+Version 2.0.14 - i18n: improved Chinese locale detection (Steam language, locale, LANGUAGE) and UI string routing via reisen_i18n; modmain and speech wiring aligned with localization helpers.
+  [中文] 国际化：改进中文环境检测（Steam 语言、locale、LANGUAGE）并通过 reisen_i18n 路由界面文案；modmain 与台词脚本与本地化辅助对齐。
+
+Version 2.0.13 - Release metadata update: bumped mod version and refreshed changelog for packaging.
+Version 2.0.11 - Dev toolchain cleanup: consolidated source artwork and build scripts under tools/; removed intermediate build artifacts; added Stex download script and release packaging script; no gameplay changes.
+Version 2.0.10 - modmain: use GLOBAL.AddComponentPostInit / AddSimPostInit / AddPrefabPostInit / AddMinimapAtlas / AddModCharacter (and GLOBAL.AddPlayerPostInit) so dedicated / local cluster Master shard strict Lua does not fail with "variable is not declared".
+Version 2.0.9 - tools/convert_inventory_tex.bat checks ktech exit code; WORN_TEXTURE_GUIDE notes running conversion on Windows after building ktech (e.g. E:\Workspace\ktools\build\Release\ktech.exe).
+Version 2.0.8 - Inventory PNG sources for the three Reisen items regenerated at 512x512 for cleaner UI when rebuilt to .tex; see anim/WORN_TEXTURE_GUIDE.txt for why worn atlases are separate from inventory art and how to repaint atlas-0.tex.
+Version 2.0.7 - All three Reisen gear items ship mod-local anim zips (reisen_gras / reisen_night / reisen_hat) so equipped swap_body / swap_hat always resolve from this mod. Meshes match grass armor, nightmare armor, and flower hat until you replace atlas-0.tex inside each zip.
+Version 2.0.6 - Lunar Loungewear (reisen_grassarmor): recipe uses 3 Silk instead of 3 Logs; strings and inventory art lean cozy moon-rabbit pajama style. Regenerate reisen_grassarmor.tex from PNG if needed.
+Version 2.0.5 - Lunar Night Mail inventory icon updated (Reisen-style blazer / shirt / red tie; women's fitted jacket silhouette). Regenerate images/inventoryimages/reisen_nightmail.tex from the PNG with Klei TextureConverter or ktech if the in-game icon does not refresh.
+
+Version 0.9.0 - Added some custom Perks.
+Version 0.9.1 - Added some Starting Items.
+Version 1.0.0 - Uploaded to Steam Workshop.
+Version 1.0.1 - Cleaned up mod files and fixed a few bugs.
+Version 1.1.0 - Completely reworked how Perk bonus stat scaling works.
+Version 1.2.0 - Changed stats and perks to be more balanced towards other characters.
+Version 1.3.0 - Activated Lunatic Red Eyes.
+Version 1.3.1 - Added a notification when certain perk effects trigger.
+Version 1.3.2 - Made Lunatic Red Eyes trigger only at night.
+Version 1.3.3 - Temporarily disabled effect notifications. 
+Version 1.3.4 - Various bug fixes.
+Version 1.3.5 - Minor tweaks and fixes.
+Version 1.3.6 - Updated for newer versions of the game.
+Version 1.3.8 - Minor tweaks for better compatibility with the "A New Reign" update.
+
+Current Mod Version: [3.0.12]
+DST Character Mod created by: Senshimi [https://steamcommunity.com/id/Senshimi/]
+Touhou Project Collection: [http://steamcommunity.com/sharedfiles/filedetails/?id=701414094]

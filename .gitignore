@@ -1,0 +1,17 @@
+# Build intermediate files
+temp/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Downloaded binary dependencies
+tools/bin/Stex.exe
+tools/bin/ktech.exe
+tools/bin/*.zip
+
+# Editor/OS files
+.cursor/
+*.DS_Store
+Thumbs.db
