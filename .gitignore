@@ -1,15 +1,14 @@
 # Build intermediate files
 temp/
+tmp/
+
+# Downloaded binary dependencies (use tools/download_stex.bat, etc.)
+tools/bin/
 
 # Python cache
 __pycache__/
 *.pyc
 *.pyo
-
-# Downloaded binary dependencies
-tools/bin/Stex.exe
-tools/bin/ktech.exe
-tools/bin/*.zip
 
 # Editor/OS files
 .cursor/
