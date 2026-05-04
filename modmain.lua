@@ -234,7 +234,7 @@ local function ReisenCharmImmunityActive()
 	local world = GLOBAL.TheWorld
 	if world ~= nil and world.state.isfullmoon then
 		-- Mirror server logic: full moon only breaks immunity at night.
-		local is_night = world:HasTag("cave") and world.state.iscavenight or world.state.isnight
+		local is_night = world:HasTag("cave") and world.state.iscavenight or not world:HasTag("cave") and world.state.isnight
 		if is_night then return false end
 	end
 	local hunger = p.replica and p.replica.hunger
@@ -327,7 +327,7 @@ AddComponentPostInit("sanity", function(sanity)
 	local function reisen_update_sane()
 		if inst.components.sanity == nil or not inst._reisen_charm_worn then return end
 		local world = GLOBAL.TheWorld
-		local is_night = world ~= nil and (world:HasTag("cave") and world.state.iscavenight or world.state.isnight)
+		local is_night = world ~= nil and (world:HasTag("cave") and world.state.iscavenight or not world:HasTag("cave") and world.state.isnight)
 		local is_full_moon = is_night and world.state.isfullmoon
 		local hunger_ok = inst.components.hunger ~= nil and inst.components.hunger.current > 0
 		local new_sane = not (is_full_moon or inst._reisen_shadow_overwhelming or not hunger_ok)
@@ -397,7 +397,7 @@ AddComponentPostInit("sanity", function(sanity)
 		end
 		local world = GLOBAL.TheWorld
 		if world == nil then return false end
-		local is_night = world:HasTag("cave") and world.state.iscavenight or world.state.isnight
+		local is_night = world:HasTag("cave") and world.state.iscavenight or not world:HasTag("cave") and world.state.isnight
 		if not is_night then return false end
 		if inst:HasTag("playerghost")
 			or (inst.components.health ~= nil and inst.components.health.dead) then
@@ -743,7 +743,7 @@ STRINGS.SCRAPBOOK = STRINGS.SCRAPBOOK or {}
 STRINGS.SCRAPBOOK.SPECIALINFO = STRINGS.SCRAPBOOK.SPECIALINFO or {}
 STRINGS.SCRAPBOOK.SPECIALINFO.REISEN_CASUAL = "Sanity restore is conditional: only active when hunger is above 75%."
 STRINGS.SCRAPBOOK.SPECIALINFO.REISEN_UNIFORM = "Slightly increases movement speed; hunger depletes faster. While worn, reduces max sanity by 25%, worsening to 50% as durability drops. Successful attacks cost a small amount of sanity. At 0 sanity, movement speed increases further and you are immune to knockback. Worn with the Lunatic Vision Ribbon, negative events can trigger at night."
-STRINGS.SCRAPBOOK.SPECIALINFO.REISEN_CHARM = "Nightmare Fuel refuels 25%, Horror Fuel 50%. Unequipping costs 25% max fuel. Applies a 50% sanity penalty but blocks all other sanity loss. When hit, each strike has a small chance to summon a Terrorbeak and cost fuel. All immunity effects cease when surrounded by a group of shadow creatures or when hunger reaches 0."
+STRINGS.SCRAPBOOK.SPECIALINFO.REISEN_CHARM = "Nightmare Fuel refuels 25%, Horror Fuel 50%. Unequipping costs 25% max fuel. Applies a 50% sanity penalty but blocks all other sanity loss. When hit, each strike has a small chance to summon a Terrorbeak and cost fuel. All immunity effects cease when surrounded by a group of shadow creatures or when hunger reaches 0. Worn together with the Lunar Battle Uniform: each hit on a shadow or nightmare creature grants +10 flat bonus damage (stacks up to +50), lasting 30 seconds and refreshed on each hit."
 
 STRINGS.NAMES.REISEN_CASUAL = "Moon Rabbit Casual"
 STRINGS.RECIPE_DESC.REISEN_CASUAL = "Soft homewear with modest armor and warmth."
@@ -995,6 +995,70 @@ AddPlayerPostInit(function(inst)
 				i._reisen_dualgear_hint_active = false
 			end
 		end
+	end)
+end)
+
+-- ── Dualgear: shadow hit damage bonus (all characters) ──────────────────────
+-- Hitting a shadowcreature / nightmarecreature while wearing full dualgear
+-- (reisen_uniform + reisen_charm) stacks a flat damage bonus applied via
+-- bonusdamagefn.  Each stack adds +10 flat damage to every hit (up to
+-- +50 at 5 stacks).  Any hit on an eligible target refreshes the 30-second
+-- expiry timer; the timer expiring clears all stacks at once.
+--
+-- Implementation note: bonusdamagefn is called server-side on every attack,
+-- so reading a plain numeric field costs virtually nothing.  We wrap any
+-- existing bonusdamagefn (e.g. Reisen's boosted crit) rather than replacing
+-- it, keeping the two effects fully independent and additive.
+local DUALGEAR_SHADOW_DMG_PER_STACK  = ReisenConsts.DUALGEAR_SHADOW_DMG_PER_STACK
+local DUALGEAR_SHADOW_DMG_MAX_STACKS = ReisenConsts.DUALGEAR_SHADOW_DMG_MAX_STACKS
+local DUALGEAR_SHADOW_DMG_DURATION   = ReisenConsts.DUALGEAR_SHADOW_DMG_DURATION
+
+AddPlayerPostInit(function(inst)
+	-- Capture any bonusdamagefn the prefab constructor already set (Reisen crit fn).
+	-- This runs after the character's fn(), so the existing fn is already in place.
+	local orig_bonus_fn = inst.components.combat ~= nil
+		and inst.components.combat.bonusdamagefn or nil
+
+	if inst.components.combat ~= nil then
+		inst.components.combat.bonusdamagefn = function(attacker, target, damage, weapon)
+			local bonus = 0
+			local stacks = attacker._reisen_dualgear_shadow_stacks or 0
+			if stacks > 0 then
+				bonus = stacks * DUALGEAR_SHADOW_DMG_PER_STACK
+			end
+			if orig_bonus_fn ~= nil then
+				bonus = bonus + orig_bonus_fn(attacker, target, damage, weapon)
+			end
+			return bonus
+		end
+	end
+
+	inst._reisen_dualgear_shadow_stacks = 0
+	inst._reisen_dualgear_shadow_task   = nil
+
+	inst:ListenForEvent("onhitother", function(i, data)
+		if not (GLOBAL.TheWorld ~= nil and GLOBAL.TheWorld.ismastersim) then return end
+		if data == nil or data.target == nil or not data.target:IsValid() then return end
+		if not (data.target:HasTag("shadowcreature") or data.target:HasTag("nightmarecreature")) then
+			return
+		end
+		if not is_reisen_dualgear_equipped(i) then return end
+
+		local new_stacks = math.min(
+			(i._reisen_dualgear_shadow_stacks or 0) + 1,
+			DUALGEAR_SHADOW_DMG_MAX_STACKS)
+		i._reisen_dualgear_shadow_stacks = new_stacks
+
+		-- Refresh the expiry timer on every eligible hit.
+		if i._reisen_dualgear_shadow_task ~= nil then
+			i._reisen_dualgear_shadow_task:Cancel()
+		end
+		i._reisen_dualgear_shadow_task = i:DoTaskInTime(
+			DUALGEAR_SHADOW_DMG_DURATION,
+			function(inst2)
+				inst2._reisen_dualgear_shadow_task   = nil
+				inst2._reisen_dualgear_shadow_stacks = 0
+			end)
 	end)
 end)
 

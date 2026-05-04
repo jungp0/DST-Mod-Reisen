@@ -16,6 +16,15 @@ return {
 	-- ── Dualgear night spawn ─────────────────────────────────────────────
 	DUALGEAR_SHADOW_SPAWN_INTERVAL = 90,  -- seconds between shadow spawns at night
 
+	-- ── Dualgear: shadow hit damage bonus (all characters) ───────────────
+	-- Hitting a shadowcreature / nightmarecreature while wearing full dualgear
+	-- grants +DUALGEAR_SHADOW_DMG_PER_STACK flat bonus damage per stack, up to
+	-- DUALGEAR_SHADOW_DMG_MAX_STACKS stacks.  Each hit refreshes the timer;
+	-- expiry clears all stacks at once.
+	DUALGEAR_SHADOW_DMG_PER_STACK  = 10,  -- +10 flat bonus damage per stack
+	DUALGEAR_SHADOW_DMG_MAX_STACKS = 5,   -- cap: 5 stacks = +50 flat max
+	DUALGEAR_SHADOW_DMG_DURATION   = 30,  -- seconds until stacks expire
+
 	-- ── Moon charm: shadow overwhelm (server sanity.sane gate in modmain) ─
 	-- When nearby shadowcreature count is >= this value, charm immunity stops.
 	CHARM_SHADOW_OVERWHELM_THRESHOLD = 3,

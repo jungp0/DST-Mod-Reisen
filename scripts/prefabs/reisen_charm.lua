@@ -120,7 +120,7 @@ local CHARM_SANITY_PENALTY     = 0.50
 local CHARM_TERRORBEAK_SPAWN_CHANCE    = 0.10
 local CHARM_TERRORBEAK_DURABILITY_LOSS = 0.10
 -- Min seconds between actual terrorbeak spawns (gates spawn only; not roll/fuel/cull).
-local CHARM_TERRORBEAK_SPAWN_COOLDOWN  = 3.0
+local CHARM_TERRORBEAK_SPAWN_COOLDOWN  = 1.5
 -- Max shadow + nightmare creatures near owner before blocking spawn; over-cap are culled.
 local CHARM_SHADOW_CREATURE_CAP        = 5
 local CHARM_SHADOW_COUNT_RADIUS        = 30

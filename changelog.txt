@@ -1,6 +1,9 @@
 Reisen Udongein Inaba | Touhou Project
 
-Changelog (Last Update: 04.05.2026 - Version 3.0.14)
+Changelog (Last Update: 05.05.2026 - Version 3.1.0)
+
+Version 3.1.0 - Dualgear offensive buff (any player with `reisen_uniform` + `reisen_charm`): each hit on a `shadowcreature` / `nightmarecreature` adds a stack of **+10** flat bonus damage via `combat.bonusdamagefn` (caps at **5** stacks, **+50** max); every eligible hit refreshes a **30 s** timer that clears all stacks on expiry. The wrapper composes with Reisen’s existing `bonusdamagefn` (e.g. boosted crit). Tunables live in `reisen_consts` (`DUALGEAR_SHADOW_DMG_*`). Moon charm: Terrorbeak spawn gate cooldown **3.0 s → 1.5 s** (`CHARM_TERRORBEAK_SPAWN_COOLDOWN`). modmain: fix **cave vs surface night** checks for ribbon sanity/immunity (`is_night` now requires surface `isnight` only when not in caves—Lua `and`/`or` precedence). Scrapbook `REISEN_CHARM` notes the dualgear shadow-hit damage bonus.
+  [中文] 双装备（月夜制服 + 幻视丝带）：每次命中暗影/梦魇生物叠一层 **+10** 固定增伤（最多 **5** 层 **+50**），每次有效命中刷新 **30 秒**倒计时，到期清零；通过 `bonusdamagefn` 包装且与铃仙原有暴击加成叠加。参数见 `reisen_consts` 的 `DUALGEAR_SHADOW_DMG_*`。丝带：恐怖鸟生成间隔门控 **3s→1.5s**。modmain：修正洞窟与地表**夜晚判断**的运算顺序，避免地表白天误用洞窟夜间逻辑。图鉴 `REISEN_CHARM` 补充双装备暗影命中加伤说明。
 
 Version 3.0.14 - `reisen_charm`: define `charm_auto_refuel_tick` and `charm_spend_fuel` before handlers that call them (e.g. terrorbeak durability spend), so fuel helpers always exist during prefab init / early callbacks—fixes potential nil call from declaration order.
   [中文] `reisen_charm`：将 `charm_auto_refuel_tick` 与 `charm_spend_fuel` 提前到调用方（如梦魇喙扣耐久）之前定义，避免预制初始化或早期回调因局部函数尚未赋值而报 nil。
@@ -92,6 +95,6 @@ Version 1.3.5 - Minor tweaks and fixes.
 Version 1.3.6 - Updated for newer versions of the game.
 Version 1.3.8 - Minor tweaks for better compatibility with the "A New Reign" update.
 
-Current Mod Version: [3.0.14]
+Current Mod Version: [3.1.0]
 DST Character Mod created by: Senshimi [https://steamcommunity.com/id/Senshimi/]
 Touhou Project Collection: [http://steamcommunity.com/sharedfiles/filedetails/?id=701414094]
