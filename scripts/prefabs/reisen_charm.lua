@@ -6,7 +6,7 @@ reisen_charm  —  Reisen's Shadow Choker (HEAD slot)
 OVERVIEW
     A fueled hat that suppresses all negative sanity effects while worn,
     at the cost of increased hunger during night and a continuous sanity
-    penalty. Runs on Nightmare Fuel; spawns a terrorbeak from the shadows
+    penalty. Runs on Nightmare Fuel; spawns a nightmarebeaks from the shadows
     when the wearer is hit (eligible attacks).
 
 STATS
@@ -55,9 +55,9 @@ TERRORBEAK SPAWN
       - Count shadowcreature / nightmarecreature within 30 m. Cap = 5.
       - If count > 5: cull farthest extras down to 5; no spawn.
       - If count >= 5: no spawn.
-      - If count < 5: check 0.5 s cooldown; if ok, spawn terrorbeak 15 m away
+      - If count < 5: check 0.5 s cooldown; if ok, spawn nightmarebeaks 15 m away
         and fire "reisen_charm_shadow_spawned".
-      - Terrorbeak auto-removes after 1/3 of a day, or 10 s after charm unequip
+      - Nightmarebeaks auto-removes after 1/3 of a day, or 10 s after charm unequip
         (whichever comes first).
 
 REISEN INTERACTION
@@ -103,7 +103,7 @@ local assets =
 	Asset("ANIM", "anim/ui_chest_3x1.zip"),
 }
 
-local prefabs = { "terrorbeak" }
+local prefabs = { "nightmarebeaks" }
 
 local CHARM_SWAP_DATA = { bank = CHARM_BANK, anim = "anim" }
 
@@ -383,7 +383,7 @@ local function charm_on_attacked(inst, owner, data)
 	end
 
 	local angle = math.random() * 2 * math.pi
-	local tb = SpawnPrefab("terrorbeak")
+	local tb = SpawnPrefab("nightmarebeaks")
 	if tb ~= nil then
 		tb.Transform:SetPosition(x + 15 * math.cos(angle), 0, z - 15 * math.sin(angle))
 		tb:DoTaskInTime(TUNING.TOTAL_DAY_TIME / 4, function(s)

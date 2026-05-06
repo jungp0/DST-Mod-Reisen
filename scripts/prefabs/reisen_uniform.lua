@@ -36,13 +36,8 @@ SANITY = 0  BONUS
     Both effects are removed as soon as sanity rises above 0 or the armor is
     unequipped.
 
-HUNGER RATE
-    Non-reisen wearers:  hungerrate × 1.2 while equipped.
-    Reisen: handled inside lunatic() via _reisen_uniform_worn flag.
-
 REISEN INTERACTION
-    Sets owner._reisen_uniform_worn = true/false so lunatic() can apply:
-      - hunger multiplier × 1.2
+    Sets owner._reisen_uniform_worn = true/false so lunatic() reruns.
     Triggers reisen_stats_dirty on equip and unequip so lunatic() reruns.
 
 EVENTS LISTENED (while equipped)
@@ -75,7 +70,6 @@ local REISEN_UNIFORM_PERISHTIME = TUNING.TOTAL_DAY_TIME * 8
 -- At san = 0 the multiplier escalates to 1.3.
 local REISEN_UNIFORM_WALKSPEED_MULT        = 1.10
 local REISEN_UNIFORM_WALKSPEED_MULT_INSANE = 1.20
-local HUNGER_MULT = 1.2
 local UNIFORM_SANITY_PENALTY       = 0.25  -- base penalty (full durability)
 local UNIFORM_SANITY_PENALTY_EXTRA = 0.25  -- max additional penalty (0 durability)
 -- Sanity lost each time the owner lands a hit (onhitother). Heavier if charm is worn.
@@ -204,10 +198,6 @@ end
 local function apply_uniform_stats(inst, owner)
 	uniform_update_sanity_penalty(inst, owner)
 	owner._reisen_uniform_worn = true
-	if owner.prefab ~= "reisen" and owner.components.hunger ~= nil and not owner._reisen_uniform_hunger_applied then
-		owner.components.hunger.hungerrate = owner.components.hunger.hungerrate * HUNGER_MULT
-		owner._reisen_uniform_hunger_applied = true
-	end
 	if owner.prefab == "reisen" then
 		owner:PushEvent("reisen_stats_dirty")
 	end
@@ -279,10 +269,6 @@ clear_uniform_stats = function(inst, owner)
 		owner.components.sanity:RemoveSanityPenalty(inst)
 	end
 	owner._reisen_uniform_worn = false
-	if owner.prefab ~= "reisen" and owner.components.hunger ~= nil and owner._reisen_uniform_hunger_applied then
-		owner.components.hunger.hungerrate = owner.components.hunger.hungerrate / HUNGER_MULT
-		owner._reisen_uniform_hunger_applied = nil
-	end
 	if owner.prefab == "reisen" then
 		owner:PushEvent("reisen_stats_dirty")
 	end

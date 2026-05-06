@@ -52,10 +52,10 @@ local CARROT_SANITY_BY_TIER     = { [1] = 25, [2] = 50, [3] = 100 }
 --  hi          | 2 – 7       | 2.5 s        | 2.0 s
 --  max         | 8 – 10      | 3.0 s        | 2.5 s
 local REISEN_LUNATIC_MAX             = ReisenConsts.LUNATIC_MAX
-local REISEN_LUNATIC_DECAY_TIME      = 1.5    -- normal, zone base (stack ≤ 1)
+local REISEN_LUNATIC_DECAY_TIME      = 2.0    -- normal, zone base (stack ≤ 1)
 local REISEN_LUNATIC_DECAY_TIME_HI   = 2.5    -- normal, zone hi  (stack 2–8)
 local REISEN_LUNATIC_DECAY_TIME_MAX  = 3.0    -- normal, zone max (stack 9–11)
-local REISEN_LUNATIC_DECAY_BOOST     = 1.0    -- boosted, zone base
+local REISEN_LUNATIC_DECAY_BOOST     = 1.5    -- boosted, zone base
 local REISEN_LUNATIC_DECAY_BOOST_HI  = 2.0    -- boosted, zone hi
 local REISEN_LUNATIC_DECAY_BOOST_MAX = 2.5    -- boosted, zone max
 
@@ -83,8 +83,8 @@ local REISEN_LUNATIC_WEAPON_DURABILITY_MULT = 0.5
 --    • incoming HP damage × SAN_CONVERSION_FRAC also drained as sanity loss
 --    • vulnerability absorb penalty partially offset (capped at 0)
 local REISEN_LUNATIC_STACK_MID_THRESH        = ReisenConsts.LUNATIC_STACK_MID
-local REISEN_LUNATIC_SAN_CONVERSION_FRAC     = 1.0
-local REISEN_LUNATIC_VULN_RELIEF_CAP_NORMAL  = 1.0   -- normal mode absorb relief cap
+local REISEN_LUNATIC_SAN_CONVERSION_FRAC     = 0.75
+local REISEN_LUNATIC_VULN_RELIEF_CAP_NORMAL  = 0.75   -- normal mode absorb relief cap
 local REISEN_LUNATIC_VULN_RELIEF_CAP_BOOSTED = 0.5    -- boosted mode absorb relief cap
 
 --  stack > REISEN_LUNATIC_STACK_HI_THRESH ──
@@ -92,7 +92,7 @@ local REISEN_LUNATIC_VULN_RELIEF_CAP_BOOSTED = 0.5    -- boosted mode absorb rel
 --    • hunger drain scaled up
 local REISEN_LUNATIC_STACK_HI_THRESH  = ReisenConsts.LUNATIC_STACK_HI
 local REISEN_LUNATIC_DAMAGE_MULT_HI   = 1.5
-local REISEN_LUNATIC_HUNGER_MULT_HI   = 1.33
+local REISEN_LUNATIC_HUNGER_MULT_HI   = 1.2
 
 --  stack ≥ 1, on kill ── HP accumulation (active):
 --    Each kill adds  min(stack+1, MAX) × REISEN_KILL_HP_PER_KILL  to a pending heal pool.
@@ -195,11 +195,11 @@ local REISEN_SANITY_TIERS = {
 }
 -- san == 0 exact ── Lunatic floor: maximum penalty; bonus regen when well-fed.
 local REISEN_SANITY_TIER_ZERO = {
-    dmg=2.00, vuln=-1.50, walk=1.30, run=1.30, neg_aura=3.0, night_drain=3.0,
+    dmg=2.00, vuln=-1.25, walk=1.30, run=1.30, neg_aura=3.0, night_drain=3.0,
     hunger=1.50, dapper=-2.00,
     light = { r=8, fo=0.4, it=0.6 },
     -- When hunger > hunger_high_thresh × max: extra hunger drain.
-    -- HP regen at this tier is handled by DoPeriodicTask (REISEN_ZERO_SAN_REGEN_HP_PER_S).
+    -- HP regen at this tier is handled by DoPeriodicTask (REISEN_ZERO_SAN_REGEN_HP_PER_S)(160hp at 1.33x1.5 hunger rate).
     hunger_high_thresh      = ReisenConsts.HUNGER_HIGH,
     hunger_high_extra_mult  = 1.33,
 }
@@ -218,11 +218,6 @@ local REISEN_ZERO_SAN_REGEN_HP_PER_S = 2.0
 local REISEN_HEALTH_REGEN_PERIOD     = 1.0   -- seconds per regen tick
 -- Shared light colour across all tiers that enable the light.
 local REISEN_LIGHT_R, REISEN_LIGHT_G, REISEN_LIGHT_B = 255/255, 180/255, 20/255
-
--- ── Uniform item ────────────────────────────────────────────────────────
---  Extra hunger drain while the uniform is equipped.
---  (Full uniform mechanics: see reisen_uniform.lua)
-local REISEN_UNIFORM_HUNGER_MULT = 1.2
 
 -- ── Full Moon Luck ──────────────────────────────────────────────────────
 local REISEN_FULLMOON_LUCK       = 10   -- luck bonus granted while isfullmoon
@@ -658,11 +653,6 @@ lunatic = function(inst)
 		if inst.components.hunger.current > tier.hunger_high_thresh * inst.components.hunger.max then
 			inst.components.hunger.hungerrate = inst.components.hunger.hungerrate * tier.hunger_high_extra_mult
 		end
-	end
-
-	-- Uniform: extra hunger drain while worn.
-	if inst._reisen_uniform_worn then
-		inst.components.hunger.hungerrate = inst.components.hunger.hungerrate * REISEN_UNIFORM_HUNGER_MULT
 	end
 
 	-- Charm: overrides all sanity effects when active (suppressed if hunger == 0).

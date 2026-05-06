@@ -55,7 +55,7 @@ return {
 	-- (boosted hunger cost uses BOOSTED_HUNGER_MULT above)
 
 	-- Slow Field (accum = 0): distance-based slow, no damage, costs stack.
-	RELEASE_SLOW_SANITY_COST  = 2,     -- sanity cost for Slow Field
+	RELEASE_SLOW_SANITY_COST  = 2.5,     -- sanity cost for Slow Field
 	RELEASE_SLOW_STACK_COST   = 1,     -- lunatic stacks consumed per Slow Field cast
 	RELEASE_SLOW_MULT         = 0.5,   -- speed multiplier at outer radius (50% speed = 50% slow)
 	RELEASE_SLOW_MULT_NEAR    = 0.25,  -- speed multiplier at inner radius (5% speed = 95% slow)

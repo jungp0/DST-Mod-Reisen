@@ -71,7 +71,7 @@ end
 local ZH = {
 	s = {
 		SCRAPBOOK_CASUAL = "回复理智有条件：仅在饥饿高于75%时生效。",
-		SCRAPBOOK_UNIFORM = "移速小幅提升，更容易感到饥饿。穿戴时减少25%理智上限，随耐久下降加剧至50%。攻击命中扣除小额理智。理智为0时移速进一步提升并免疫击飞。与幻视丝带同时穿戴时夜晚触发负面事件。",
+		SCRAPBOOK_UNIFORM = "移速小幅提升。穿戴时减少25%理智上限，随耐久下降加剧至50%。攻击命中扣除小额理智。理智为0时移速进一步提升并免疫击飞。与幻视丝带同时穿戴时夜晚触发负面事件。",
 		SCRAPBOOK_CHARM = "噩梦燃料补充25%，恐怖燃料补充50%。施加50%理智惩罚，但屏蔽一切其他负面理智。卸下时损失25%最大耐久。受击时有一定概率召唤恐怖尖喙并消耗燃料。被多个或以上暗影生物包围或者饥饿耗尽时，屏蔽效果全部失效。",
 		SCRAPBOOK_OINTMENT = "使用后治愈50点生命，降低25点理智。进入开悟状态，攻击命中后效果消失。",
 		CASUAL_NAME = "居家服",
@@ -124,7 +124,7 @@ local ZH = {
 	},
 	t = {
 		SCRAPBOOK_CASUAL = "回復理智有條件：僅在飢餓高於75%時生效。",
-		SCRAPBOOK_UNIFORM = "移速小幅提升，更容易感到飢餓。穿戴時減少25%理智上限，隨耐久下降加劇至50%。攻擊命中扣除小額理智。理智為0時移速進一步提升並免疫擊飛。與幻視絲帶同時穿戴時夜晚觸發負面事件。",
+		SCRAPBOOK_UNIFORM = "移速小幅提升。穿戴時減少25%理智上限，隨耐久下降加劇至50%。攻擊命中扣除小額理智。理智為0時移速進一步提升並免疫擊飛。與幻視絲帶同時穿戴時夜晚觸發負面事件。",
 		SCRAPBOOK_CHARM = "噩夢燃料補充25%，恐怖燃料補充50%。施加50%理智懲罰，但屏蔽一切其他負面理智。卸下時損失25%最大耐久。受擊時有一定機率召喚恐怖尖喙並消耗燃料。被多個或以上暗影生物包圍或飢餓耗盡時，屏蔽效果全部失效。",
 		SCRAPBOOK_OINTMENT = "使用後治愈50點生命，降低25點理智。進入開悟狀態，攻擊命中後效果消失。",
 		CASUAL_NAME = "居家服",
@@ -208,9 +208,10 @@ local function ApplyToStrings(str, z)
 	str.SCRAPBOOK.SPECIALINFO.REISEN_CHARM = z.SCRAPBOOK_CHARM
 
 	str.ACTIONS = str.ACTIONS or {}
-	str.ACTIONS.REISEN_RELEASE_HEAL = z.ACTION_RELEASE_HEAL
-	str.ACTIONS.REISEN_MOON_PORT    = z.ACTION_MOON_PORT
-	str.ACTIONS.REISEN_STATS        = z.ACTION_STATS
+	str.ACTIONS.REISEN_RELEASE_HEAL        = z.ACTION_RELEASE_HEAL
+	str.ACTIONS.REISEN_MOON_PORT           = z.ACTION_MOON_PORT
+	str.ACTIONS.REISEN_MOON_PORT_BOOSTED   = z.ACTION_MOON_PORT
+	str.ACTIONS.REISEN_STATS               = z.ACTION_STATS
 	str.REISEN_STATS_FMT            = z.STATS_FMT
 	str.REISEN_ACCUM_FMT            = z.PETAL_ACCUM_FMT
 end

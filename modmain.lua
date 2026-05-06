@@ -312,7 +312,9 @@ end
 
 AddComponentPostInit("sanity", function(sanity)
 	local inst = sanity.inst
-	if inst == nil or not inst:HasTag("player") then
+	-- Only Reisen needs the charm/dualgear listeners; skip all other players
+	-- to avoid registering unused event handlers on every player entity.
+	if inst == nil or inst.prefab ~= "reisen" then
 		return
 	end
 	local w = GLOBAL.TheWorld
@@ -487,7 +489,9 @@ AddComponentPostInit("sanity", function(sanity)
 			night_spawn_task:Cancel()
 			night_spawn_task = nil
 		end
-		_bunnyman_spawned_this_moon = false
+		-- _bunnyman_spawned_this_moon is intentionally NOT reset here so that
+		-- unequipping and re-equipping dualgear on the same full-moon night cannot
+		-- retrigger the batch.  Only a true dawn transition resets it.
 	end
 
 	-- Start / stop based on night transitions (surface and cave).
@@ -497,6 +501,7 @@ AddComponentPostInit("sanity", function(sanity)
 			start_night_spawn()
 		else
 			stop_night_spawn()
+			_bunnyman_spawned_this_moon = false  -- new day: next full moon is fresh
 		end
 	end)
 
@@ -506,6 +511,7 @@ AddComponentPostInit("sanity", function(sanity)
 			start_night_spawn()
 		else
 			stop_night_spawn()
+			_bunnyman_spawned_this_moon = false  -- new day: next full moon is fresh
 		end
 	end)
 
@@ -618,7 +624,7 @@ if not TheNet:IsDedicated() then
 			-- crazy, don't suppress even if client-side immunity looks active.
 			-- This covers cases where server overrides sane=false for reasons
 			-- the client can't see (shadow overwhelming, full moon timing gap).
-			local p = GLOBAL.ThePlayer
+			local p = self.owner or GLOBAL.ThePlayer
 			local sanity = p ~= nil and p.replica ~= nil and p.replica.sanity or nil
 			if sanity == nil or not sanity:IsCrazy() then
 				return
@@ -659,6 +665,12 @@ AddPrefabPostInit("world", function(world)
 		if player ~= GLOBAL.ThePlayer then
 			return
 		end
+		-- Guard against playeractivated firing multiple times for the same entity
+		-- (e.g. shard migration back to the same world within one session).
+		if player._reisen_client_listeners_registered then
+			return
+		end
+		player._reisen_client_listeners_registered = true
 		player:ListenForEvent("equip", function(_, data)
 			if data ~= nil and data.item ~= nil and data.item.prefab == "reisen_charm" then
 				ReisenApplySanityMute()
@@ -1204,15 +1216,14 @@ end
 -- Unified cost function.  Returns false if the cost cannot be paid (caller should abort).
 --
 -- Boosted (stack > 0 and _reisen_lunatic_boosted):
---   Drain hunger × BOOSTED_HUNGER_MULT (scaled by vuln); requires hunger > 0.
---   Also applies the sanity effect below.
+--   Requires hunger > 0.  Drains hunger × BOOSTED_HUNGER_MULT (scaled by vuln).
+--   Sanity is not touched.
 --
--- Enlightenment (SANITY_MODE_LUNACY):
---   Adding sanity is the penalty: gain = sanity_cost × (1 − vuln).
---   [vuln ≤ 0 → gain ≥ sanity_cost]
+-- Normal, Enlightenment (SANITY_MODE_LUNACY):
+--   Recover sanity: gain = sanity_cost × (1 − vuln).
 --
--- Normal (not boosted, not Enlightenment):
---   Deduct sanity; fall back to hunger drain if insufficient.
+-- Normal, not Enlightenment:
+--   Deduct sanity; fall back to hunger drain if sanity insufficient.
 --   Returns false when neither sanity nor hunger is available.
 local function ReisenPayCost(inst, sanity_cost)
     local s    = inst.components.sanity
@@ -1227,6 +1238,7 @@ local function ReisenPayCost(inst, sanity_cost)
         if inst.components.hunger ~= nil then
             inst.components.hunger:DoDelta(sanity_cost * (-1 + vuln) * REISEN_BOOSTED_HUNGER_MULT)
         end
+        return true  -- boosted: hunger only, sanity untouched
     end
 
     if s ~= nil and s.IsLunacyMode ~= nil and s:IsLunacyMode() then
@@ -1234,19 +1246,16 @@ local function ReisenPayCost(inst, sanity_cost)
         return true
     end
 
-    if not is_boosted then
-        if not ReisenCanAffordReleaseCost(inst, sanity_cost, false) then
-            return false
-        end
-        if s ~= nil and s.current >= sanity_cost then
-            s:DoDelta(-sanity_cost)
-        else
-            if inst.components.hunger ~= nil then
-                inst.components.hunger:DoDelta(sanity_cost * (-1 + vuln))
-            end
+    if not ReisenCanAffordReleaseCost(inst, sanity_cost, false) then
+        return false
+    end
+    if s ~= nil and s.current >= sanity_cost then
+        s:DoDelta(-sanity_cost)
+    else
+        if inst.components.hunger ~= nil then
+            inst.components.hunger:DoDelta(sanity_cost * (-1 + vuln))
         end
     end
-
     return true
 end
 
@@ -1288,6 +1297,108 @@ local function ReisenApplyFear(ent, duration, source_pos)
     end
 end
 
+-- ══════════════════════════════════════════════════════════════════════════
+-- Shared AoE helpers – called by both ReleaseHeal and MoonPort.
+-- All position arguments are ground-level (y=0 unless the target is elevated).
+-- ══════════════════════════════════════════════════════════════════════════
+
+-- MODE A core: damage + fear + slow AoE around (tx,tz).
+-- Returns true if any enemy was killed (for boost-state trigger).
+local function ReisenDoMindBlowingAoE(doer, tx, tz, accum, is_boosted)
+    local aoe_radius = is_boosted and REISEN_RELEASE_HEAL_RADIUS_BOOSTED or REISEN_RELEASE_HEAL_RADIUS_MAX
+    local dmg_mult = math.max((doer.components.combat ~= nil and doer.components.combat.damagemultiplier) or 1, 0.01)
+    local damage_amount = accum * dmg_mult
+    local dest_pos = GLOBAL.Vector3(tx, 0, tz)
+
+    local ents = GLOBAL.TheSim:FindEntities(tx, 0, tz, aoe_radius,
+        nil, {"INLIMBO", "FX", "NOCLICK", "player", "playerghost"})
+    local any_killed = false
+    for _, ent in ipairs(ents) do
+        if ent ~= nil and ent:IsValid() and ent ~= doer then
+            local is_structure = ent:HasTag("structure") or ent:HasTag("wall")
+            local follower = ent.components.follower
+            local leader = follower ~= nil and follower:GetLeader() or nil
+            local followed_by_player = leader ~= nil and leader:HasTag("player")
+            local is_combat_entity = ent.components.combat ~= nil
+                and not ent:HasTag("companion")
+                and not ent:HasTag("notarget")
+            if is_combat_entity and not is_structure and not followed_by_player then
+                local health = ent.components.health
+                if health ~= nil and not health:IsDead() then
+                    ent.components.combat:GetAttacked(doer, damage_amount, nil)
+                    if health:IsDead() then
+                        any_killed = true
+                    end
+                    local hit_fx = GLOBAL.SpawnPrefab("sanity_lower")
+                    if hit_fx ~= nil then
+                        local ex, ey, ez = ent.Transform:GetWorldPosition()
+                        hit_fx.Transform:SetPosition(ex, ey, ez)
+                    end
+                end
+                ReisenApplyFear(ent, REISEN_RELEASE_HEAL_FEAR_DURATION, dest_pos)
+                ReisenApplySlow(ent, REISEN_RELEASE_SLOW_DURATION, REISEN_RELEASE_SLOW_MULT)
+            end
+        end
+    end
+
+    local wave_prefab = is_boosted and "moonpulse2_fx" or "moonpulse_fx"
+    local wave_fx = GLOBAL.SpawnPrefab(wave_prefab)
+    if wave_fx ~= nil then
+        wave_fx.Transform:SetPosition(tx, 0, tz)
+    end
+    return any_killed
+end
+
+-- MODE B core: distance-based slow field AoE around (tx,tz), no damage.
+-- Plays the slow-field sound and FX at the target position.
+local function ReisenDoSlowFieldAoE(doer, tx, tz)
+    local aoe_radius = REISEN_RELEASE_HEAL_RADIUS_MAX
+    local r_near = REISEN_RELEASE_HEAL_RADIUS_MIN
+    local r_span = aoe_radius - r_near  -- guaranteed > 0 by constants
+
+    -- _reisen_no_stack_aoe prevents stack gain from the 0-damage hit in reisen_on_hit_other.
+    doer._reisen_no_stack_aoe = true
+    local ents = GLOBAL.TheSim:FindEntities(tx, 0, tz, aoe_radius,
+        nil, {"INLIMBO", "FX", "NOCLICK", "player", "playerghost"})
+    for _, ent in ipairs(ents) do
+        if ent ~= nil and ent:IsValid() and ent ~= doer then
+            local is_structure = ent:HasTag("structure") or ent:HasTag("wall")
+            local follower = ent.components.follower
+            local leader = follower ~= nil and follower:GetLeader() or nil
+            local followed_by_player = leader ~= nil and leader:HasTag("player")
+            local is_combat_entity = ent.components.combat ~= nil
+                and not ent:HasTag("companion")
+                and not ent:HasTag("notarget")
+            if is_combat_entity and not is_structure and not followed_by_player then
+                local health = ent.components.health
+                if health ~= nil and not health:IsDead() then
+                    -- 0-damage hit: fires on-hit events without dealing damage.
+                    ent.components.combat:GetAttacked(doer, 1, nil)
+                end
+                -- Distance-based slow: RADIUS_MIN → 95% slow, RADIUS_MAX → 50% slow.
+                local ex, _, ez = ent.Transform:GetWorldPosition()
+                local dist = math.sqrt((ex - tx)^2 + (ez - tz)^2)
+                local t = math.max(0, math.min(1, (dist - r_near) / r_span))
+                local slow_mult = REISEN_RELEASE_SLOW_MULT_NEAR
+                    + t * (REISEN_RELEASE_SLOW_MULT - REISEN_RELEASE_SLOW_MULT_NEAR)
+                ReisenApplySlow(ent, REISEN_RELEASE_SLOW_DURATION, slow_mult)
+            end
+        end
+    end
+    doer._reisen_no_stack_aoe = false
+
+    if doer.SoundEmitter ~= nil then
+        doer.SoundEmitter:PlaySound("dontstarve/common/nightmareAddFuel")
+    end
+    local slow_fx = GLOBAL.SpawnPrefab("slingshot_aoe_fx")
+    if slow_fx ~= nil then
+        slow_fx.Transform:SetPosition(tx, 0, tz)
+        slow_fx:SetColorType("slow")
+    end
+end
+
+-- ══════════════════════════════════════════════════════════════════════════
+
 local function ReisenDoReleaseHeal(act)
     local doer = act.doer
     local target = act.target
@@ -1299,11 +1410,12 @@ local function ReisenDoReleaseHeal(act)
         _reisen_dbg("[REISEN] ReleaseHeal: client side, returning true")
         return true
     end
+
     local stack = doer._reisen_lunatic_stack or 0
     local accum = doer._reisen_kill_hp_accum or 0
-    _reisen_dbg(string.format("[REISEN] ReleaseHeal: server entry  stack=%d accum=%d target=%s",
-        stack, accum, target ~= nil and tostring(target) or "nil"))
+    _reisen_dbg(string.format("[REISEN] ReleaseHeal: server entry  stack=%d accum=%d", stack, accum))
     ReisenPerf.Bump("release_heal.invoke")
+
     if stack <= 0 then
         _reisen_dbg("[REISEN] ReleaseHeal: ABORT – stack=0")
         return false
@@ -1315,232 +1427,71 @@ local function ReisenDoReleaseHeal(act)
     else
         tx, ty, tz = doer.Transform:GetWorldPosition()
     end
-    local source_pos = GLOBAL.Vector3(tx, ty, tz)
 
     if accum > 0 then
-        _reisen_dbg(string.format("[REISEN] ReleaseHeal: → MODE A (Mind Blowing)  accum=%d", accum))
-        -- ══════════════════════════════════════════════════════════════════
-        -- MODE A: Mind Blowing (accum > 0)
-        -- Normal:  cost = sanity (hunger fallback), heal self = accum × SELF_FRACTION
-        -- Boosted: cost = hunger only (× BOOSTED_HUNGER_MULT), heal self reduced
-        -- Both:    damage + fear to nearby hostiles
-        -- ══════════════════════════════════════════════════════════════════
+        -- ── MODE A: Mind Blowing ──────────────────────────────────────────
+        _reisen_dbg(string.format("[REISEN] ReleaseHeal: → MODE A  accum=%d", accum))
         local is_boosted = doer._reisen_lunatic_boosted == true
+        if not ReisenPayCost(doer, REISEN_RELEASE_HEAL_SANITY_COST) then return false end
 
-        if not ReisenPayCost(doer, REISEN_RELEASE_HEAL_SANITY_COST) then
-            return false
-        end
+        doer._reisen_kill_hp_accum = 0
+        doer._reisen_kill_hp_accum_net_last_value = 0
+        if doer._reisen_kill_hp_accum_net ~= nil then doer._reisen_kill_hp_accum_net:set(0) end
 
-    local heal_amount = accum
-    doer._reisen_kill_hp_accum = 0
-    doer._reisen_kill_hp_accum_net_last_value = 0
-    if doer._reisen_kill_hp_accum_net ~= nil then
-        doer._reisen_kill_hp_accum_net:set(0)
-    end
-
-    local damage_mult   = (doer.components.combat ~= nil
-            and doer.components.combat.damagemultiplier) or 1
-        damage_mult = math.max(damage_mult, 0.01)  -- guard against zero/negative multiplier
-
-        -- Self-heal scales inversely with damage: higher damage output → less self-heal.
-        local self_heal_frac = is_boosted
-            and (REISEN_RELEASE_HEAL_BOOSTED_SELF_MULT / damage_mult)
-            or  (1 / damage_mult)
-        local self_heal = heal_amount * self_heal_frac
+        local dmg_mult = math.max((doer.components.combat ~= nil and doer.components.combat.damagemultiplier) or 1, 0.01)
+        local self_heal_frac = is_boosted and (REISEN_RELEASE_HEAL_BOOSTED_SELF_MULT / dmg_mult) or (1 / dmg_mult)
         if doer.components.health ~= nil then
-            doer.components.health:DoDelta(self_heal, true)
+            doer.components.health:DoDelta(accum * self_heal_frac, true)
         end
 
-        local aoe_radius = is_boosted and REISEN_RELEASE_HEAL_RADIUS_BOOSTED
-            or REISEN_RELEASE_HEAL_RADIUS_MAX
+        local any_killed = ReisenDoMindBlowingAoE(doer, tx, tz, accum, is_boosted)
+        if any_killed and not is_boosted then doer:PushEvent("reisen_mindblowing_killed") end
 
-        local _t_aoe_done = ReisenPerf.Begin("release_heal.modeA.aoe_loop")
-        local _t_find_done = ReisenPerf.Begin("release_heal.modeA.find_entities")
-        local ents = GLOBAL.TheSim:FindEntities(tx, ty, tz, aoe_radius,
-            nil, {"INLIMBO", "FX", "NOCLICK", "player", "playerghost"})
-        _t_find_done()
-        ReisenPerf.Bump("release_heal.modeA.find_entities.count", #ents)
-
-        local damage_amount = heal_amount * damage_mult
-        local fear_duration = REISEN_RELEASE_HEAL_FEAR_DURATION
-
-        -- Stack gain comes from the normal onhitother path (reisen_on_hit_other).
-        -- The 0.1s hit throttle ensures exactly one stack increment per AoE cast
-        -- regardless of how many enemies are in range, and properly resets the decay task.
-        local any_killed = false
-        for _, ent in ipairs(ents) do
-            if ent ~= nil and ent:IsValid() and ent ~= doer then
-                local is_structure = ent:HasTag("structure") or ent:HasTag("wall")
-                local follower = ent.components.follower
-                local leader = follower ~= nil and follower:GetLeader() or nil
-                local followed_by_player = leader ~= nil and leader:HasTag("player")
-                local is_combat_entity = ent.components.combat ~= nil
-                    and not ent:HasTag("companion")
-                    and not ent:HasTag("notarget")
-                if is_combat_entity and not is_structure and not followed_by_player then
-                    if not ent.components.health:IsDead() then
-                        ent.components.combat:GetAttacked(doer, damage_amount, nil)
-                        if ent.components.health:IsDead() then
-                            any_killed = true
-                        end
-                        local hit_fx = GLOBAL.SpawnPrefab("sanity_lower")
-                        if hit_fx ~= nil then
-                            local ex, ey, ez = ent.Transform:GetWorldPosition()
-                            hit_fx.Transform:SetPosition(ex, ey, ez)
-                        end
-                    end
-                    if fear_duration > 0 then
-                        ReisenApplyFear(ent, fear_duration, source_pos)
-                        ReisenApplySlow(ent, REISEN_RELEASE_SLOW_DURATION, REISEN_RELEASE_SLOW_MULT)
-                    end
-                end
-            end
-        end
-        _t_aoe_done()
-
-        -- Normal-state Mind Blowing kill → enter boost state preserving current stack.
-        if any_killed and not is_boosted then
-            doer:PushEvent("reisen_mindblowing_killed")
-        end
-
-        -- Self: energy leaving the caster
-        if doer.SoundEmitter ~= nil then
-            doer.SoundEmitter:PlaySound("maxwell_rework/shadow_magic/cast")
-        end
+        if doer.SoundEmitter ~= nil then doer.SoundEmitter:PlaySound("maxwell_rework/shadow_magic/cast") end
         local px, py, pz = doer.Transform:GetWorldPosition()
         local self_fx = GLOBAL.SpawnPrefab("attune_out_fx")
-        if self_fx ~= nil then
-            self_fx.Transform:SetPosition(px, py, pz)
-        end
-        -- Target: boosted uses moonpulse2_fx, normal uses moonpulse_fx
-        local wave_prefab = is_boosted and "moonpulse2_fx" or "moonpulse_fx"
-        local wave_fx = GLOBAL.SpawnPrefab(wave_prefab)
-        if wave_fx ~= nil then
-            wave_fx.Transform:SetPosition(tx, ty, tz)
-        end
-        -- Speech: "Mind Blowing!"
+        if self_fx ~= nil then self_fx.Transform:SetPosition(px, py, pz) end
+
         if doer.components.talker ~= nil then
-            local speech = STRINGS.CHARACTERS
-                and STRINGS.CHARACTERS.REISEN
+            local speech = STRINGS.CHARACTERS and STRINGS.CHARACTERS.REISEN
                 and STRINGS.CHARACTERS.REISEN.ANNOUNCE_REISEN_MIND_BLOWING
-            if type(speech) == "string" and speech ~= "" then
-                doer.components.talker:Say(speech)
-            end
+            if type(speech) == "string" and speech ~= "" then doer.components.talker:Say(speech) end
         end
     else
-        _reisen_dbg(string.format("[REISEN] ReleaseHeal: → MODE B (Slow Field)  stack=%d", stack))
-        -- ══════════════════════════════════════════════════════════════════
-        -- MODE B: Slow Field (accum = 0, stack >= RELEASE_SLOW_STACK_COST)
-        -- Cost: RELEASE_SLOW_SANITY_COST sanity + stacks (hunger fallback if sanity insufficient)
-        -- Effect: 50% slow for RELEASE_SLOW_DURATION to hostiles, no damage
-        -- ══════════════════════════════════════════════════════════════════
+        -- ── MODE B: Slow Field ────────────────────────────────────────────
+        _reisen_dbg(string.format("[REISEN] ReleaseHeal: → MODE B  stack=%d", stack))
         if stack < REISEN_RELEASE_SLOW_STACK_COST then
             _reisen_dbg(string.format("[REISEN] ReleaseHeal: ABORT MODE B – stack=%d < SLOW_STACK_COST=%d", stack, REISEN_RELEASE_SLOW_STACK_COST))
             return false
         end
-        if not ReisenPayCost(doer, REISEN_RELEASE_SLOW_SANITY_COST) then
-            return false
-        end
+        if not ReisenPayCost(doer, REISEN_RELEASE_SLOW_SANITY_COST) then return false end
 
         local new_stack = stack - REISEN_RELEASE_SLOW_STACK_COST
         doer._reisen_lunatic_stack = new_stack
-        if doer._reisen_lunatic_net ~= nil then
-            doer._reisen_lunatic_net:set(new_stack)
-        end
+        if doer._reisen_lunatic_net ~= nil then doer._reisen_lunatic_net:set(new_stack) end
         if new_stack == 0 then
-            -- Stack drained to zero: run the unified exit flow (clears boost state,
-            -- cancels decay task, updates locomotor and net vars).
             doer:PushEvent("reisen_stack_zeroed")
         else
-            -- Trigger lunatic() immediately so sanity-tier stats (hunger rate, damage
-            -- mult, etc.) reflect the new stack level without waiting for the decay tick.
             doer:PushEvent("reisen_stats_dirty")
         end
 
-        -- Mind Stopper scans the full MAX radius; inner enemies receive a
-        -- heavier slow than outer enemies (linear falloff by distance).
-        local aoe_radius  = REISEN_RELEASE_HEAL_RADIUS_MAX
+        ReisenDoSlowFieldAoE(doer, tx, tz)
 
-        local _t_aoe_done = ReisenPerf.Begin("release_heal.modeB.aoe_loop")
-        local _t_find_done = ReisenPerf.Begin("release_heal.modeB.find_entities")
-        local ents = GLOBAL.TheSim:FindEntities(tx, ty, tz, aoe_radius,
-            nil, {"INLIMBO", "FX", "NOCLICK", "player", "playerghost"})
-        _t_find_done()
-        ReisenPerf.Bump("release_heal.modeB.find_entities.count", #ents)
-
-        local r_near = REISEN_RELEASE_HEAL_RADIUS_MIN
-        local r_far  = REISEN_RELEASE_HEAL_RADIUS_MAX
-        local r_span = r_far - r_near  -- guaranteed > 0 by constants
-
-        -- Slow Field hits fire on-hit effects (e.g. Mind Blowing procs) but must
-        -- not grant stack.  _reisen_no_stack_aoe blocks the stack path in
-        -- reisen_on_hit_other.
-        doer._reisen_no_stack_aoe = true
-        for _, ent in ipairs(ents) do
-            if ent ~= nil and ent:IsValid() and ent ~= doer then
-                local is_structure = ent:HasTag("structure") or ent:HasTag("wall")
-                local follower = ent.components.follower
-                local leader = follower ~= nil and follower:GetLeader() or nil
-                local followed_by_player = leader ~= nil and leader:HasTag("player")
-                local is_combat_entity = ent.components.combat ~= nil
-                    and not ent:HasTag("companion")
-                    and not ent:HasTag("notarget")
-                if is_combat_entity and not is_structure and not followed_by_player then
-                    if not ent.components.health:IsDead() then
-                        -- 0-damage hit: fires on-hit events without dealing damage.
-                        ent.components.combat:GetAttacked(doer, 1, nil)
-                    end
-                    -- Distance-based slow: RADIUS_MIN → 95% slow (mult 0.05),
-                    -- RADIUS_MAX → 50% slow (mult 0.5), linear between them.
-                    local ex, _, ez = ent.Transform:GetWorldPosition()
-                    local dist = math.sqrt((ex - tx)^2 + (ez - tz)^2)
-                    local t = math.max(0, math.min(1, (dist - r_near) / r_span))
-                    local slow_mult = REISEN_RELEASE_SLOW_MULT_NEAR
-                        + t * (REISEN_RELEASE_SLOW_MULT - REISEN_RELEASE_SLOW_MULT_NEAR)
-                    ReisenApplySlow(ent, REISEN_RELEASE_SLOW_DURATION, slow_mult)
-                end
-            end
-        end
-        doer._reisen_no_stack_aoe = false
-        _t_aoe_done()
-
-        -- Slow field: ripple of lunatic wavelengths centered on target
-        if doer.SoundEmitter ~= nil then
-            doer.SoundEmitter:PlaySound("dontstarve/common/nightmareAddFuel")
-        end
-        -- Caster: slow-energy emanation on the caster
         local px, py, pz = doer.Transform:GetWorldPosition()
         local caster_fx = GLOBAL.SpawnPrefab("attune_out_fx")
-        if caster_fx ~= nil then
-            caster_fx.Transform:SetPosition(px, py, pz)
-        end
-        -- Target area: expanding slow-field ripple
-        local slow_fx = GLOBAL.SpawnPrefab("slingshot_aoe_fx")
-        if slow_fx ~= nil then
-            slow_fx.Transform:SetPosition(tx, 0, tz)
-            slow_fx:SetColorType("slow")
-        end
-        -- Target area: shadow puff burst at the cast point
+        if caster_fx ~= nil then caster_fx.Transform:SetPosition(px, py, pz) end
         local shadow_puff_fx = GLOBAL.SpawnPrefab("statue_transition_2")
-        if shadow_puff_fx ~= nil then
-            shadow_puff_fx.Transform:SetPosition(tx, ty, tz)
-        end
-        -- Speech: "Mind Stopper." then "I need more soul to boost the power."
+        if shadow_puff_fx ~= nil then shadow_puff_fx.Transform:SetPosition(tx, ty, tz) end
+
         if doer.components.talker ~= nil then
-            local sp1 = STRINGS.CHARACTERS
-                and STRINGS.CHARACTERS.REISEN
+            local sp1 = STRINGS.CHARACTERS and STRINGS.CHARACTERS.REISEN
                 and STRINGS.CHARACTERS.REISEN.ANNOUNCE_REISEN_MIND_STOPPER
-            if type(sp1) == "string" and sp1 ~= "" then
-                doer.components.talker:Say(sp1)
-            end
-            local sp2 = STRINGS.CHARACTERS
-                and STRINGS.CHARACTERS.REISEN
+            if type(sp1) == "string" and sp1 ~= "" then doer.components.talker:Say(sp1) end
+            local sp2 = STRINGS.CHARACTERS and STRINGS.CHARACTERS.REISEN
                 and STRINGS.CHARACTERS.REISEN.ANNOUNCE_REISEN_SLOW_NEED_SOUL
             if type(sp2) == "string" and sp2 ~= "" then
                 doer:DoTaskInTime(1.5, function(d)
-                    if d:IsValid() and d.components.talker ~= nil then
-                        d.components.talker:Say(sp2)
-                    end
+                    if d:IsValid() and d.components.talker ~= nil then d.components.talker:Say(sp2) end
                 end)
             end
         end
@@ -1618,19 +1569,17 @@ AddStategraphActionHandler("wilson_client", GLOBAL.ActionHandler(GLOBAL.ACTIONS.
 -- ════════════════════════════════════════════════════════════════════════
 
 -- Returns true when the player is in Enlightenment (SANITY_MODE_LUNACY).
+-- MODE A (accum > 0): teleport + damage AoE.
+-- MODE B (accum = 0): teleport + Slow Field, no stack requirement in Enlightenment.
 local function ReisenCanMoonPort(inst)
     if inst == nil or inst.prefab ~= "reisen" then return false end
     if inst:HasTag("playerghost") then return false end
     if not ReisenIsEnlightened(inst) then return false end
-    local accum
-    if TheNet:GetIsServer() or TheNet:IsDedicated() then
-        accum = inst._reisen_kill_hp_accum or 0
-    else
-        accum = inst._reisen_kill_hp_accum_net ~= nil and inst._reisen_kill_hp_accum_net:value() or 0
-    end
-    return accum > 0
+    return true
 end
 
+-- Moon Port: same logic as ReleaseHeal but targeting a ground position chosen
+-- by the player, with a teleport prepended and stack restrictions removed.
 local function ReisenDoMoonPort(act)
     local doer = act.doer
     if doer == nil or doer.prefab ~= "reisen" then
@@ -1641,165 +1590,88 @@ local function ReisenDoMoonPort(act)
         _reisen_dbg("[REISEN] MoonPort: client side, returning true")
         return true
     end
-
     if not ReisenIsEnlightened(doer) then
         _reisen_dbg("[REISEN] MoonPort: ABORT – not in Enlightenment")
         return false
     end
 
-    local accum = doer._reisen_kill_hp_accum or 0
-    if accum <= 0 then
-        _reisen_dbg("[REISEN] MoonPort: ABORT – accum=0")
-        return false
-    end
-
-    -- act.pos is a DynamicPosition; use GetActionPoint() to obtain the Vector3.
     local actionpt = act:GetActionPoint()
     if actionpt == nil then
         _reisen_dbg("[REISEN] MoonPort: ABORT – act.pos nil")
         return false
     end
-    local tx = actionpt.x
-    local tz = actionpt.z
-
+    local tx, tz = actionpt.x, actionpt.z
+    local accum = doer._reisen_kill_hp_accum or 0
     local stack = doer._reisen_lunatic_stack or 0
     local is_boosted = stack > 0 and doer._reisen_lunatic_boosted == true
-    local skip_self_heal = (stack == 0)
+    _reisen_dbg(string.format("[REISEN] MoonPort: stack=%d accum=%d boosted=%s", stack, accum, tostring(is_boosted)))
 
-    _reisen_dbg(string.format("[REISEN] MoonPort: stack=%d accum=%d boosted=%s skip_heal=%s",
-        stack, accum, tostring(is_boosted), tostring(skip_self_heal)))
+    -- Pay cost before any irreversible action.
+    local cost = accum > 0 and REISEN_RELEASE_HEAL_SANITY_COST or REISEN_RELEASE_SLOW_SANITY_COST
+    if not ReisenPayCost(doer, cost) then return false end
 
-    if not ReisenPayCost(doer, REISEN_RELEASE_HEAL_SANITY_COST) then
-        return false
-    end
-
-    local heal_amount = accum
-    doer._reisen_kill_hp_accum = 0
-    doer._reisen_kill_hp_accum_net_last_value = 0
-    if doer._reisen_kill_hp_accum_net ~= nil then
-        doer._reisen_kill_hp_accum_net:set(0)
-    end
-
-    -- Self-heal at cast time (skipped when stack = 0)
-    if not skip_self_heal then
-        local dmg_mult = (doer.components.combat ~= nil
-            and doer.components.combat.damagemultiplier) or 1
-        dmg_mult = math.max(dmg_mult, 0.01)
-        local self_heal_frac = is_boosted
-            and (REISEN_RELEASE_HEAL_BOOSTED_SELF_MULT / dmg_mult)
-            or  (1 / dmg_mult)
-        if doer.components.health ~= nil then
-            doer.components.health:DoDelta(heal_amount * self_heal_frac, true)
+    -- MODE A only: consume accum and self-heal (skip self-heal when stack=0).
+    if accum > 0 then
+        doer._reisen_kill_hp_accum = 0
+        doer._reisen_kill_hp_accum_net_last_value = 0
+        if doer._reisen_kill_hp_accum_net ~= nil then doer._reisen_kill_hp_accum_net:set(0) end
+        if stack > 0 and doer.components.health ~= nil then
+            local dmg_mult = math.max((doer.components.combat ~= nil and doer.components.combat.damagemultiplier) or 1, 0.01)
+            local self_heal_frac = is_boosted and (REISEN_RELEASE_HEAL_BOOSTED_SELF_MULT / dmg_mult) or (1 / dmg_mult)
+            doer.components.health:DoDelta(accum * self_heal_frac, true)
         end
     end
 
-    -- Immediate cast FX at caster position
+    -- Departure FX + teleport.
     local px, py, pz = doer.Transform:GetWorldPosition()
-    if doer.SoundEmitter ~= nil then
-        doer.SoundEmitter:PlaySound("maxwell_rework/shadow_magic/cast")
-    end
+    if doer.SoundEmitter ~= nil then doer.SoundEmitter:PlaySound("maxwell_rework/shadow_magic/cast") end
     local cast_fx = GLOBAL.SpawnPrefab("attune_out_fx")
-    if cast_fx ~= nil then
-        cast_fx.Transform:SetPosition(px, py, pz)
-    end
+    if cast_fx ~= nil then cast_fx.Transform:SetPosition(px, py, pz) end
 
-    -- Teleport + Mind Blowing at destination (immediate, no delay)
-    local d = doer
+    if doer.Physics ~= nil then doer.Physics:Teleport(tx, 0, tz)
+    else doer.Transform:SetPosition(tx, 0, tz) end
 
-    -- Teleport (y is always 0 for ground-level positions)
-    if d.Physics ~= nil then
-        d.Physics:Teleport(tx, 0, tz)
-    else
-        d.Transform:SetPosition(tx, 0, tz)
-    end
-
-    -- Post-arrival invincibility: 8 frames ≈ 0.27 s (same as orange-staff / quicktele).
-    if d.components.health ~= nil then
-        d.components.health:SetInvincible(true)
-    end
-    d:DoTaskInTime(8 / 30, function(p)
-        if p ~= nil and p:IsValid() and p.components.health ~= nil then
-            p.components.health:SetInvincible(false)
-        end
+    -- Post-arrival invincibility: 8 frames ≈ 0.27 s.
+    if doer.components.health ~= nil then doer.components.health:SetInvincible(true) end
+    doer:DoTaskInTime(8 / 30, function(p)
+        if p ~= nil and p:IsValid() and p.components.health ~= nil then p.components.health:SetInvincible(false) end
     end)
+    local arrive_fx = GLOBAL.SpawnPrefab("statue_transition_2")
+    if arrive_fx ~= nil then arrive_fx.Transform:SetPosition(tx, 0, tz) end
 
-        -- Arrival FX
-        local arrive_fx = GLOBAL.SpawnPrefab("statue_transition_2")
-        if arrive_fx ~= nil then
-            arrive_fx.Transform:SetPosition(tx, 0, tz)
-        end
+    -- AoE at destination.
+    if accum > 0 then
+        local any_killed = ReisenDoMindBlowingAoE(doer, tx, tz, accum, is_boosted)
+        if any_killed and not is_boosted and stack > 0 then doer:PushEvent("reisen_mindblowing_killed") end
+        _reisen_dbg("[REISEN] MoonPort: MODE A done")
+    else
+        ReisenDoSlowFieldAoE(doer, tx, tz)
+        _reisen_dbg("[REISEN] MoonPort: MODE B (Slow Field) done")
+    end
 
-        -- Mind Blowing AoE at destination
-        local aoe_radius = is_boosted and REISEN_RELEASE_HEAL_RADIUS_BOOSTED or REISEN_RELEASE_HEAL_RADIUS_MAX
-        local dmg_mult = (d.components.combat ~= nil
-            and d.components.combat.damagemultiplier) or 1
-        dmg_mult = math.max(dmg_mult, 0.01)
-        local damage_amount = heal_amount * dmg_mult
-        local dest_pos = GLOBAL.Vector3(tx, 0, tz)
-
-        local ents = GLOBAL.TheSim:FindEntities(tx, 0, tz, aoe_radius,
-            nil, {"INLIMBO", "FX", "NOCLICK", "player", "playerghost"})
-        local any_killed = false
-        for _, ent in ipairs(ents) do
-            if ent ~= nil and ent:IsValid() and ent ~= d then
-                local is_structure = ent:HasTag("structure") or ent:HasTag("wall")
-                local follower = ent.components.follower
-                local leader = follower ~= nil and follower:GetLeader() or nil
-                local followed_by_player = leader ~= nil and leader:HasTag("player")
-                local is_combat_entity = ent.components.combat ~= nil
-                    and not ent:HasTag("companion")
-                    and not ent:HasTag("notarget")
-                if is_combat_entity and not is_structure and not followed_by_player then
-                    if not ent.components.health:IsDead() then
-                        ent.components.combat:GetAttacked(d, damage_amount, nil)
-                        if ent.components.health:IsDead() then
-                            any_killed = true
-                        end
-                        local hit_fx = GLOBAL.SpawnPrefab("sanity_lower")
-                        if hit_fx ~= nil then
-                            local ex, ey, ez = ent.Transform:GetWorldPosition()
-                            hit_fx.Transform:SetPosition(ex, ey, ez)
-                        end
-                    end
-                    ReisenApplyFear(ent, REISEN_RELEASE_HEAL_FEAR_DURATION, dest_pos)
-                    ReisenApplySlow(ent, REISEN_RELEASE_SLOW_DURATION, REISEN_RELEASE_SLOW_MULT)
-                end
-            end
-        end
-
-        -- Wave FX at destination
-        local wave_prefab = is_boosted and "moonpulse2_fx" or "moonpulse_fx"
-        local wave_fx = GLOBAL.SpawnPrefab(wave_prefab)
-        if wave_fx ~= nil then
-            wave_fx.Transform:SetPosition(tx, 0, tz)
-        end
-
-        -- Speech: "Moon Port"
-        if d.components.talker ~= nil then
-            local speech = STRINGS.CHARACTERS
-                and STRINGS.CHARACTERS.REISEN
-                and STRINGS.CHARACTERS.REISEN.ANNOUNCE_REISEN_MOON_PORT
-            if type(speech) == "string" and speech ~= "" then
-                d.components.talker:Say(speech)
-            end
-        end
-
-        -- Boost trigger (normal mode kill → enter boosted state)
-        if any_killed and not is_boosted and stack > 0 then
-            d:PushEvent("reisen_mindblowing_killed")
-        end
-
-    _reisen_dbg("[REISEN] MoonPort: teleport + AoE done")
+    if doer.components.talker ~= nil then
+        local speech = STRINGS.CHARACTERS and STRINGS.CHARACTERS.REISEN
+            and STRINGS.CHARACTERS.REISEN.ANNOUNCE_REISEN_MOON_PORT
+        if type(speech) == "string" and speech ~= "" then doer.components.talker:Say(speech) end
+    end
 
     _reisen_dbg("[REISEN] MoonPort: DONE – returning true")
     return true
 end
 
+-- Two action definitions share the same fn; only do_not_locomote differs.
+-- Using two static objects avoids mutating global action state at runtime,
+-- which would be a bug when multiple Reisen players are in the same shard.
 AddAction("REISEN_MOON_PORT", STRINGS.ACTIONS.REISEN_MOON_PORT or "Moon Port", ReisenDoMoonPort)
-GLOBAL.ACTIONS.REISEN_MOON_PORT.rmb = true
+GLOBAL.ACTIONS.REISEN_MOON_PORT.rmb      = true
 GLOBAL.ACTIONS.REISEN_MOON_PORT.distance = ReisenConsts.MOON_PORT_RANGE
 GLOBAL.ACTIONS.REISEN_MOON_PORT.priority = 9
--- GLOBAL.ACTIONS.REISEN_MOON_PORT.do_not_locomote = true
+
+AddAction("REISEN_MOON_PORT_BOOSTED", STRINGS.ACTIONS.REISEN_MOON_PORT or "Moon Port", ReisenDoMoonPort)
+GLOBAL.ACTIONS.REISEN_MOON_PORT_BOOSTED.rmb             = true
+GLOBAL.ACTIONS.REISEN_MOON_PORT_BOOSTED.distance        = ReisenConsts.MOON_PORT_RANGE
+GLOBAL.ACTIONS.REISEN_MOON_PORT_BOOSTED.priority        = 9
+GLOBAL.ACTIONS.REISEN_MOON_PORT_BOOSTED.do_not_locomote = true
 
 -- AddComponentAction("WORLD", fn) does NOT handle ground right-clicks in DST.
 -- Empty-tile right-click goes through playeractionpicker:GetPointSpecialActions →
@@ -1820,7 +1692,12 @@ AddClassPostConstruct("components/playeractionpicker", function(self)
             if world ~= nil and world.Map ~= nil
                 and world.Map:IsPassableAtPoint(px, 0, pz)
             then
-                return s:SortActionList({ GLOBAL.ACTIONS.REISEN_MOON_PORT }, pos, useitem)
+                local is_boosted = s.inst._reisen_lunatic_boosted_net ~= nil
+                    and s.inst._reisen_lunatic_boosted_net:value() == true
+                local action = is_boosted
+                    and GLOBAL.ACTIONS.REISEN_MOON_PORT_BOOSTED
+                    or  GLOBAL.ACTIONS.REISEN_MOON_PORT
+                return s:SortActionList({ action }, pos, useitem)
             end
         end
         return orig(s, pos, useitem, right, usereticulepos)
@@ -1833,6 +1710,8 @@ end
 
 AddStategraphActionHandler("wilson", GLOBAL.ActionHandler(GLOBAL.ACTIONS.REISEN_MOON_PORT, ReisenMoonPortHandler))
 AddStategraphActionHandler("wilson_client", GLOBAL.ActionHandler(GLOBAL.ACTIONS.REISEN_MOON_PORT, ReisenMoonPortHandler))
+AddStategraphActionHandler("wilson", GLOBAL.ActionHandler(GLOBAL.ACTIONS.REISEN_MOON_PORT_BOOSTED, ReisenMoonPortHandler))
+AddStategraphActionHandler("wilson_client", GLOBAL.ActionHandler(GLOBAL.ACTIONS.REISEN_MOON_PORT_BOOSTED, ReisenMoonPortHandler))
 
 -- ════════════════════════════════════════════════════════════════════════
 --  REISEN BOOSTED AUTO-COLLECT (PICK / HARVEST)
