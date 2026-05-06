@@ -40,7 +40,7 @@ if (-not $done) {
 
 $txt = [System.IO.File]::ReadAllText($changelog, $u8)
 $d = Get-Date -Format 'dd.MM.yyyy'
-$txt = $txt -replace 'Changelog \(Last Update:[^\)]+\)', ('Changelog (Last Update: ' + $d + ' - Version ' + $Version + ')')
+$txt = $txt -replace 'Changelog \(Last Update:[^)]+\)', ('Changelog (Last Update: ' + $d + ' - Version ' + $Version + ')')
 $txt = $txt -replace 'Current Mod Version: \[[^\]]*\]', ('Current Mod Version: [' + $Version + ']')
 [System.IO.File]::WriteAllText($changelog, $txt, $u8)
 
