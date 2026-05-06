@@ -1,6 +1,9 @@
 Reisen Udongein Inaba | Touhou Project
 
-Changelog (Last Update: 06.05.2026 - Version 3.1.3)
+Changelog (Last Update: 06.05.2026 - Version 3.1.4)
+
+Version 3.1.4 - modmain `sanity` `AddComponentPostInit`: the 3.1.1 guard `inst.prefab == "reisen"` ran while `inst.prefab` was still unset (assigned only after the prefab fn returns), so the charm / dualgear world listeners never attached to any player. Enter the block for all `player` entities again via `HasTag("player")`; behavior stays scoped by equip (`reisen_charm`, `reisen_uniform`) and existing `inst.prefab == "reisen"` checks inside handlers (e.g. speech).
+  [中文] modmain：`sanity` 的 `AddComponentPostInit` 若用 `inst.prefab == "reisen"` 过滤，会在 `prefab` 尚未赋值时恒为假，导致幻视丝带与双装备月夜逻辑无法注册到任何玩家。恢复以 `HasTag("player")` 进入该段；实际是否生效仍由是否装备 `reisen_charm` / 双装备及现有回调内条件决定，台词等仍仅在 `inst.prefab == "reisen"` 时触发。
 
 Version 3.1.3 - `reisen_charm` (Moon Charm): hit-triggered shadow spawn used invalid prefab `nightmarebeaks`; replaced with vanilla `terrorbeak` in `SpawnPrefab` and the `prefabs` preload list; header docs updated. `changelog.txt` history: Chinese/English wording aligned with `reisen_i18n` keys (e.g. Lunar Phase / 月之相位, `ACTION_RELEASE_HEAL` / 释放心灵风暴, uniform & charm item names, 恐怖尖喙).
   [中文] 幻视丝带（`reisen_charm`）：受击召唤误用预制名 `nightmarebeaks`，已改为原版 `terrorbeak`，并修正 `prefabs` 预加载与文件头说明。`changelog.txt` 历史版本说明的中文与英文已与 `reisen_i18n` 用语对齐（如月之相位、释放心灵风暴、月夜制服、恐怖尖喙等）。
@@ -104,6 +107,6 @@ Version 1.3.5 - Minor tweaks and fixes.
 Version 1.3.6 - Updated for newer versions of the game.
 Version 1.3.8 - Minor tweaks for better compatibility with the "A New Reign" update.
 
-Current Mod Version: [3.1.3]
+Current Mod Version: [3.1.4]
 DST Character Mod created by: Senshimi [https://steamcommunity.com/id/Senshimi/]
 Touhou Project Collection: [http://steamcommunity.com/sharedfiles/filedetails/?id=701414094]

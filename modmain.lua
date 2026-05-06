@@ -312,9 +312,10 @@ end
 
 AddComponentPostInit("sanity", function(sanity)
 	local inst = sanity.inst
-	-- Only Reisen needs the charm/dualgear listeners; skip all other players
-	-- to avoid registering unused event handlers on every player entity.
-	if inst == nil or inst.prefab ~= "reisen" then
+	-- inst.prefab is not set yet during AddComponentPostInit (it's assigned by
+	-- SpawnPrefab after the prefab fn returns), so we must check HasTag("player")
+	-- here and defer the prefab check to runtime inside each listener.
+	if inst == nil or not inst:HasTag("player") then
 		return
 	end
 	local w = GLOBAL.TheWorld
