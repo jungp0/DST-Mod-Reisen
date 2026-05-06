@@ -402,6 +402,13 @@ AddComponentPostInit("sanity", function(sanity)
 			or body.prefab ~= "reisen_uniform" then
 			return false
 		end
+		-- shadowheart_infused in slot 3 suppresses duelgear night spawn.
+		if head.components.container ~= nil then
+			local sh = head.components.container:GetItemInSlot(3)
+			if sh ~= nil and sh.prefab == "shadowheart_infused" then
+				return false
+			end
+		end
 		local world = GLOBAL.TheWorld
 		if world == nil then return false end
 		local is_night = world:HasTag("cave") and world.state.iscavenight or not world:HasTag("cave") and world.state.isnight
@@ -787,7 +794,7 @@ STRINGS.SCRAPBOOK = STRINGS.SCRAPBOOK or {}
 STRINGS.SCRAPBOOK.SPECIALINFO = STRINGS.SCRAPBOOK.SPECIALINFO or {}
 STRINGS.SCRAPBOOK.SPECIALINFO.REISEN_CASUAL = "Sanity restore is conditional: only active when hunger is above 75%."
 STRINGS.SCRAPBOOK.SPECIALINFO.REISEN_UNIFORM = "Slightly increases movement speed; hunger depletes faster. While worn, reduces max sanity by 25%, worsening to 50% as durability drops. Successful attacks cost a small amount of sanity. At 0 sanity, movement speed increases further and you are immune to knockback. Worn with the Lunatic Vision Ribbon, negative events can trigger at night."
-STRINGS.SCRAPBOOK.SPECIALINFO.REISEN_CHARM = "Nightmare Fuel refuels 25%, Horror Fuel 50%. Unequipping costs 25% max fuel. Applies a 50% sanity penalty but blocks all other sanity loss. When hit, each strike has a small chance to summon a Terrorbeak and cost fuel. All immunity effects cease when surrounded by a group of shadow creatures or when hunger reaches 0. Worn together with the Lunar Battle Uniform: each hit on a shadow or nightmare creature grants +10 flat bonus damage (stacks up to +50), lasting 30 seconds and refreshed on each hit."
+STRINGS.SCRAPBOOK.SPECIALINFO.REISEN_CHARM = "Nightmare Fuel refuels 25%; Horror Fuel refuels for twice the amount. Applies a 50% sanity penalty but blocks all other negative sanity effects. Unequipping costs some durability. When hit, each strike has a chance to summon a Terrorbeak and consume fuel. Suppression ends when surrounded by multiple shadow creatures or when hunger is depleted. Has three built-in storage slots; automatically consumes stored fuel to restore durability. Placing a Shadow Atrium or Possessed Shadow Atrium inside removes negative effects to varying degrees."
 
 STRINGS.NAMES.REISEN_CASUAL = "Moon Rabbit Casual"
 STRINGS.RECIPE_DESC.REISEN_CASUAL = "Soft homewear with modest armor and warmth."
@@ -953,7 +960,7 @@ scrapbookdata["reisen_casual"] = {
 	prefab = "reisen_casual",
 	armor = 300,
 	absorb_percent = 0.75,
-	insulator = 60,
+	insulator = 120,
 	insulator_type = "winter",
 	dapperness = 0.041667,
 	fueltype = "BURNABLE",

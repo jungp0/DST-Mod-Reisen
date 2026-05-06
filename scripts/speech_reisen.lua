@@ -172,7 +172,7 @@ return {
 	ANNOUNCE_REISEN_SLOW_NEED_SOUL = "I need more soul to boost the power.",
 	ANNOUNCE_REISEN_ACCUM_FULL = "Mind Blowing charged.",
 	ANNOUNCE_REISEN_CHARM_SHADOWHEART     = "Won't cost durability to unequip.",
-	ANNOUNCE_REISEN_CHARM_SHADOWHEART_INF = "Won't summon on being hit.",
+	ANNOUNCE_REISEN_CHARM_SHADOWHEART_INF = "Won't summon on being hit or at night.",
 	ANNOUNCE_REISEN_CHARM_FUEL_EMPTY      = "Shadow fuel exhausted.",
 	DESCRIBE =
 	{
