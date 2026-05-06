@@ -1675,25 +1675,9 @@ local master_postinit = function(inst)
 		end
 	end)
 	reisen_update_lunatic_state(inst)
-	-- Normal-state Mind Blowing kill at max stack: enter boost without resetting stack.
-	-- Only triggers when stack == REISEN_LUNATIC_MAX (cap must be full to qualify).
-	-- Stack stays at whatever it was; only the boosted flag and decay timer change.
-	inst:ListenForEvent("reisen_mindblowing_killed", function(i)
-		if not (TheWorld ~= nil and TheWorld.ismastersim) then return end
-		if i._reisen_lunatic_boosted then return end
-		local cur_stack = i._reisen_lunatic_stack or 0
-		if cur_stack < REISEN_LUNATIC_MAX then return end
-		i._reisen_boosted_meat_trigger_count = 0
-		i._reisen_lunatic_boosted = true
-		i._reisen_boost_move_mult = REISEN_BOOST_MOVE_MULT_START
-		if i._reisen_lunatic_decay_task ~= nil then
-			i._reisen_lunatic_decay_task:Cancel()
-			i._reisen_lunatic_decay_task = nil
-		end
-		i._reisen_lunatic_decay_task = i:DoTaskInTime(
-			reisen_decay_delay(i, cur_stack), reisen_lunatic_decay)
-		reisen_update_lunatic_state(i)
-		reisen_spawn_boost_fx(i)
+	-- Mind Blowing / Moon Port cast with accum at cap and stack > HI: enter boost.
+	inst:ListenForEvent("reisen_boost_triggered", function(i)
+		reisen_on_booster_applied(i)
 	end)
 	inst:ListenForEvent("reisen_charm_shadow_spawned", function(i)
 		reisen_say_hidden_hint(i, "ANNOUNCE_REISEN_CHARM_SHADOW", 25)

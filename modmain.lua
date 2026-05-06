@@ -245,7 +245,11 @@ local function ReisenCharmImmunityActive()
 end
 
 local function ReisenShouldSuppressGreyVision()
-	return IsReisenCharacter() or ReisenCharmImmunityActive()
+	-- Grey vision / distortion is suppressed whenever charm is worn, regardless
+	-- of whether full immunity is active.  Even when conditions break charm
+	-- immunity (full-moon night, starvation, nightmare amulet, …) the
+	-- PostProcessor flicker effect should still be hidden.
+	return IsReisenCharacter() or ReisenMooncharmEquipped()
 end
 
 local function ReisenShouldSuppressSanitySound()
@@ -620,7 +624,15 @@ if not TheNet:IsDedicated() then
 	local PlayerHud = require("screens/playerhud")
 	local old_GoInsane = PlayerHud.GoInsane
 	function PlayerHud:GoInsane(...)
-		if ReisenShouldSuppressFramework() then
+		-- Track whether we entered through the suppression path.
+		-- suppress_active == true  →  client thinks charm immunity is on, but
+		--   IsCrazy() overrides (external inducedinsanity, e.g. nightmare amulet).
+		--   In this case we WANT the vig "insane" animation to show.
+		-- suppress_active == false →  charm immunity is genuinely broken by game
+		--   conditions (full moon night, starvation, shadow overwhelm).
+		--   In this case we suppress the dark-edge vig animation for charm wearers.
+		local suppress_active = ReisenShouldSuppressFramework()
+		if suppress_active then
 			-- Defer to the server replica: if the server says the player is
 			-- crazy, don't suppress even if client-side immunity looks active.
 			-- This covers cases where server overrides sane=false for reasons
@@ -632,8 +644,21 @@ if not TheNet:IsDedicated() then
 			end
 		end
 		old_GoInsane(self, ...)
-		if IsReisenCharacter() then
+		if IsReisenCharacter() or ReisenMooncharmEquipped() then
 			ReisenHideVigVeins(self)
+		end
+		if ReisenMooncharmEquipped() then
+			-- old_GoInsane may directly write PostProcessor state (colour cube,
+			-- distortion, overlay) before OnSanityDelta has a chance to fire.
+			ReisenClearGreyVision()
+			-- When charm immunity was NOT active (game-condition crazy: full moon,
+			-- starvation, shadow overwhelm), suppress the vig dark-edge animation
+			-- so non-Reisen charm wearers behave the same as Reisen.
+			-- When suppress_active was true (external inducedinsanity, e.g. nightmare
+			-- amulet), keep the "insane" vig animation to signal the forced state.
+			if not suppress_active then
+				self.vig:GetAnimState():PlayAnimation("basic", true)
+			end
 		end
 	end
 end
@@ -679,9 +704,15 @@ AddPrefabPostInit("world", function(world)
 				-- framework immediately without querying replica, which may not
 				-- yet reflect the newly equipped item and would cause GoInsane to
 				-- fire incorrectly while the replica catches up.
+				-- Exception: if an external source (e.g. nightmare amulet) is
+				-- holding inducedinsanity active, the server keeps sane=false and
+				-- the replica will already report IsCrazy()==true by this tick.
+				-- In that case skip GoSane so the frame stays visible.
 				player:DoTaskInTime(0, function()
 					local hud = player.HUD
 					if hud == nil then return end
+					local san = player.replica ~= nil and player.replica.sanity or nil
+					if san ~= nil and san:IsCrazy() then return end
 					if hud.GoSane ~= nil then hud:GoSane() end
 					ReisenClearGreyVision()
 				end)
@@ -1216,6 +1247,8 @@ end
 
 -- Unified cost function.  Returns false if the cost cannot be paid (caller should abort).
 --
+-- Universal gate: hunger = 0 always blocks all skills.
+--
 -- Boosted (stack > 0 and _reisen_lunatic_boosted):
 --   Requires hunger > 0.  Drains hunger × BOOSTED_HUNGER_MULT (scaled by vuln).
 --   Sanity is not touched.
@@ -1227,6 +1260,11 @@ end
 --   Deduct sanity; fall back to hunger drain if sanity insufficient.
 --   Returns false when neither sanity nor hunger is available.
 local function ReisenPayCost(inst, sanity_cost)
+    -- Universal gate: hunger = 0 blocks all skills regardless of mode.
+    if inst.components.hunger == nil or inst.components.hunger.current <= 0 then
+        return false
+    end
+
     local s    = inst.components.sanity
     local vuln = inst.vulnerable or 0
     local is_boosted = (inst._reisen_lunatic_stack or 0) > 0
@@ -1418,8 +1456,12 @@ local function ReisenDoReleaseHeal(act)
     ReisenPerf.Bump("release_heal.invoke")
 
     if stack <= 0 then
-        _reisen_dbg("[REISEN] ReleaseHeal: ABORT – stack=0")
-        return false
+        _reisen_dbg("[REISEN] ReleaseHeal: ABORT – stack=0 (returning true to avoid client stall)")
+        -- Return true to let the castspellmind state complete normally on both
+        -- server and client.  When client net vars are stale, client may enter
+        -- the action while server's authoritative stack is already 0; returning
+        -- false here causes a state mismatch that freezes the character.
+        return true
     end
 
     local tx, ty, tz
@@ -1433,7 +1475,10 @@ local function ReisenDoReleaseHeal(act)
         -- ── MODE A: Mind Blowing ──────────────────────────────────────────
         _reisen_dbg(string.format("[REISEN] ReleaseHeal: → MODE A  accum=%d", accum))
         local is_boosted = doer._reisen_lunatic_boosted == true
-        if not ReisenPayCost(doer, REISEN_RELEASE_HEAL_SANITY_COST) then return false end
+        if not ReisenPayCost(doer, REISEN_RELEASE_HEAL_SANITY_COST) then
+            _reisen_dbg("[REISEN] ReleaseHeal: MODE A cost failed (returning true to avoid client stall)")
+            return true
+        end
 
         doer._reisen_kill_hp_accum = 0
         doer._reisen_kill_hp_accum_net_last_value = 0
@@ -1446,7 +1491,9 @@ local function ReisenDoReleaseHeal(act)
         end
 
         local any_killed = ReisenDoMindBlowingAoE(doer, tx, tz, accum, is_boosted)
-        if any_killed and not is_boosted then doer:PushEvent("reisen_mindblowing_killed") end
+        if accum >= REISEN_RELEASE_HEAL_ACCUM_CAP then
+            doer:PushEvent("reisen_boost_triggered")
+        end
 
         if doer.SoundEmitter ~= nil then doer.SoundEmitter:PlaySound("maxwell_rework/shadow_magic/cast") end
         local px, py, pz = doer.Transform:GetWorldPosition()
@@ -1462,10 +1509,13 @@ local function ReisenDoReleaseHeal(act)
         -- ── MODE B: Slow Field ────────────────────────────────────────────
         _reisen_dbg(string.format("[REISEN] ReleaseHeal: → MODE B  stack=%d", stack))
         if stack < REISEN_RELEASE_SLOW_STACK_COST then
-            _reisen_dbg(string.format("[REISEN] ReleaseHeal: ABORT MODE B – stack=%d < SLOW_STACK_COST=%d", stack, REISEN_RELEASE_SLOW_STACK_COST))
-            return false
+            _reisen_dbg(string.format("[REISEN] ReleaseHeal: MODE B stack insufficient (returning true to avoid client stall)"))
+            return true
         end
-        if not ReisenPayCost(doer, REISEN_RELEASE_SLOW_SANITY_COST) then return false end
+        if not ReisenPayCost(doer, REISEN_RELEASE_SLOW_SANITY_COST) then
+            _reisen_dbg("[REISEN] ReleaseHeal: MODE B cost failed (returning true to avoid client stall)")
+            return true
+        end
 
         local new_stack = stack - REISEN_RELEASE_SLOW_STACK_COST
         doer._reisen_lunatic_stack = new_stack
@@ -1643,7 +1693,9 @@ local function ReisenDoMoonPort(act)
     -- AoE at destination.
     if accum > 0 then
         local any_killed = ReisenDoMindBlowingAoE(doer, tx, tz, accum, is_boosted)
-        if any_killed and not is_boosted and stack > 0 then doer:PushEvent("reisen_mindblowing_killed") end
+        if accum >= REISEN_RELEASE_HEAL_ACCUM_CAP then
+            doer:PushEvent("reisen_boost_triggered")
+        end
         _reisen_dbg("[REISEN] MoonPort: MODE A done")
     else
         ReisenDoSlowFieldAoE(doer, tx, tz)
