@@ -47,8 +47,8 @@ local assets =
 }
 
 local REISEN_CASUAL_ABSORPTION = 0.75
-local REISEN_CASUAL_CONDITION = 300
-local REISEN_CASUAL_INSULATION = 120
+local REISEN_CASUAL_CONDITION = 375
+local REISEN_CASUAL_INSULATION = 60
 
 local function casual_dapperfn(inst, owner)
 	if owner.components.hunger ~= nil and owner.components.hunger.current >= ReisenConsts.HUNGER_HIGH * owner.components.hunger.max then
