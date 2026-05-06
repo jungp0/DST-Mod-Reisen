@@ -1,6 +1,9 @@
 Reisen Udongein Inaba | Touhou Project
 
-Changelog (Last Update: 06.05.2026 - Version 3.1.1)
+Changelog (Last Update: 06.05.2026 - Version 3.1.2)
+
+Version 3.1.2 - Moon Port (`REISEN_MOON_PORT` / `REISEN_MOON_PORT_BOOSTED`): set `encumbered_valid = true` on both actions so the ground right-click cast stays available while heavylifting (carrying portable structures).
+  [中文] 月港：两个动作均设置 `encumbered_valid = true`，搬运便携建筑（重负）时仍可右键地面施放月港。
 
 Version 3.1.1 - Moon Port now activates in Enlightenment regardless of `_reisen_kill_hp_accum`: MODE A (accum > 0) teleports + triggers damage/fear/slow AoE (`ReisenDoMindBlowingAoE`); MODE B (accum = 0) teleports + applies a Slow Field (`ReisenDoSlowFieldAoE`). A second `REISEN_MOON_PORT_BOOSTED` action (same fn, `do_not_locomote = true`) is dispatched when boosted, fixing locomotion during the cast. Slow Field sanity cost raised 2 → 2.5. Balance: lunatic stack base decay 1.5 s → 2.0 s (boosted base 1.0 s → 1.5 s); sanity-to-damage conversion fraction 1.0 → 0.75; normal-mode vuln relief cap 1.0 → 0.75; san-0 tier vulnerability eased −1.50 → −1.25; hi-stack hunger multiplier 1.33 → 1.2. Uniform hunger-rate penalty (×1.2) removed for all wearers; i18n uniform scrapbook description updated accordingly. Bug fixes: `sanity` PostInit now guards on `prefab == "reisen"` instead of `HasTag("player")` to avoid registering unused event handlers on every player; `_bunnyman_spawned_this_moon` no longer clears on dualgear unequip—only on dawn transition; client-side sanity mute reads `self.owner` instead of `ThePlayer`; `playeractivated` listener registration guarded against duplicate firing on shard migration. `ReisenPayCost` boosted branch now returns `true` without touching sanity; shared AoE helpers extracted from both `ReleaseHeal` and `MoonPort`.
   [中文] 月港不再要求 accum > 0：开悟状态即可使用——accum > 0（MODE A）传送后触发伤害/恐惧/减速范围（`ReisenDoMindBlowingAoE`）；accum = 0（MODE B）传送后施放减速场（`ReisenDoSlowFieldAoE`）。新增 `REISEN_MOON_PORT_BOOSTED` 动作（`do_not_locomote = true`）修复狂暴时的位移逻辑。减速场理智费 2 → 2.5。数值：狂暴叠层基础衰减 1.5s→2.0s，狂暴时基础衰减 1.0s→1.5s；理智转伤害系数 1.0→0.75；普通理智吸收缓解上限 0.75；理智为 0 的脆弱度 −1.50→−1.25；高叠层饥饿倍率 1.33→1.2。制服饥饿乘算（×1.2）对所有穿戴者一并移除；图鉴描述同步更新。Bug 修复：sanity PostInit 改为仅对 `reisen` 预制生效，不再为所有玩家注册无用事件；`_bunnyman_spawned_this_moon` 仅在黎明时重置，卸装后不清零；客户端理智静音改用 `self.owner`；对同一世界分片迁移触发多次 `playeractivated` 加防重复注册守卫。`ReisenPayCost` 狂暴分支正确返回 true 且不修改理智；心爆与月港的 AoE 逻辑提取为共享辅助函数。
@@ -98,6 +101,6 @@ Version 1.3.5 - Minor tweaks and fixes.
 Version 1.3.6 - Updated for newer versions of the game.
 Version 1.3.8 - Minor tweaks for better compatibility with the "A New Reign" update.
 
-Current Mod Version: [3.1.1]
+Current Mod Version: [3.1.2]
 DST Character Mod created by: Senshimi [https://steamcommunity.com/id/Senshimi/]
 Touhou Project Collection: [http://steamcommunity.com/sharedfiles/filedetails/?id=701414094]

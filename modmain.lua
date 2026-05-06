@@ -1663,15 +1663,17 @@ end
 -- Using two static objects avoids mutating global action state at runtime,
 -- which would be a bug when multiple Reisen players are in the same shard.
 AddAction("REISEN_MOON_PORT", STRINGS.ACTIONS.REISEN_MOON_PORT or "Moon Port", ReisenDoMoonPort)
-GLOBAL.ACTIONS.REISEN_MOON_PORT.rmb      = true
-GLOBAL.ACTIONS.REISEN_MOON_PORT.distance = ReisenConsts.MOON_PORT_RANGE
-GLOBAL.ACTIONS.REISEN_MOON_PORT.priority = 9
+GLOBAL.ACTIONS.REISEN_MOON_PORT.rmb               = true
+GLOBAL.ACTIONS.REISEN_MOON_PORT.distance          = ReisenConsts.MOON_PORT_RANGE
+GLOBAL.ACTIONS.REISEN_MOON_PORT.priority          = 9
+GLOBAL.ACTIONS.REISEN_MOON_PORT.encumbered_valid  = true  -- allow use while heavylifting (carrying portable structures)
 
 AddAction("REISEN_MOON_PORT_BOOSTED", STRINGS.ACTIONS.REISEN_MOON_PORT or "Moon Port", ReisenDoMoonPort)
-GLOBAL.ACTIONS.REISEN_MOON_PORT_BOOSTED.rmb             = true
-GLOBAL.ACTIONS.REISEN_MOON_PORT_BOOSTED.distance        = ReisenConsts.MOON_PORT_RANGE
-GLOBAL.ACTIONS.REISEN_MOON_PORT_BOOSTED.priority        = 9
-GLOBAL.ACTIONS.REISEN_MOON_PORT_BOOSTED.do_not_locomote = true
+GLOBAL.ACTIONS.REISEN_MOON_PORT_BOOSTED.rmb               = true
+GLOBAL.ACTIONS.REISEN_MOON_PORT_BOOSTED.distance          = ReisenConsts.MOON_PORT_RANGE
+GLOBAL.ACTIONS.REISEN_MOON_PORT_BOOSTED.priority          = 9
+GLOBAL.ACTIONS.REISEN_MOON_PORT_BOOSTED.do_not_locomote   = true
+GLOBAL.ACTIONS.REISEN_MOON_PORT_BOOSTED.encumbered_valid  = true  -- allow use while heavylifting (carrying portable structures)
 
 -- AddComponentAction("WORLD", fn) does NOT handle ground right-clicks in DST.
 -- Empty-tile right-click goes through playeractionpicker:GetPointSpecialActions →
