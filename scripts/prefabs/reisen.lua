@@ -1675,7 +1675,7 @@ local master_postinit = function(inst)
 		end
 	end)
 	reisen_update_lunatic_state(inst)
-	-- Mind Blowing / Moon Port cast with accum at cap and stack > HI: enter boost.
+	-- Mind Blowing / Moon Port MODE A: modmain fires when kill pool is at cap (`RELEASE_HEAL_ACCUM_CAP`).
 	inst:ListenForEvent("reisen_boost_triggered", function(i)
 		reisen_on_booster_applied(i)
 	end)
