@@ -135,6 +135,14 @@ local function uniform_update_walkspeed(inst, owner)
 	owner.components.locomotor:SetExternalSpeedMultiplier(inst, UNIFORM_SPEED_KEY, mult)
 end
 
+-- Named callback for post-attack sanity penalty update (avoids per-hit closure allocation).
+local function _uniform_post_attack_cb(inst)
+	local owner = inst._reisen_uniform_owner
+	if owner ~= nil and owner:IsValid() and owner._reisen_uniform_worn then
+		uniform_update_sanity_penalty(inst, owner)
+	end
+end
+
 local function OnBlocked(owner)
 	owner.SoundEmitter:PlaySound("dontstarve/wilson/hit_nightarmour")
 end
@@ -198,19 +206,17 @@ end
 local function apply_uniform_stats(inst, owner)
 	uniform_update_sanity_penalty(inst, owner)
 	owner._reisen_uniform_worn = true
+	inst._reisen_uniform_owner = owner
 	if owner.prefab == "reisen" then
 		owner:PushEvent("reisen_stats_dirty")
 	end
 
 	-- Recalculate sanity penalty one tick after being attacked so durability
-	-- loss from the hit is already reflected.
+	-- loss from the hit is already reflected. Uses named callback to avoid
+	-- per-hit closure allocation.
 	if inst._reisen_uniform_attacked_fn == nil then
 		inst._reisen_uniform_attacked_fn = function()
-			inst:DoTaskInTime(0, function(i)
-				if owner ~= nil and owner:IsValid() and owner._reisen_uniform_worn then
-					uniform_update_sanity_penalty(i, owner)
-				end
-			end)
+			inst:DoTaskInTime(0, _uniform_post_attack_cb)
 		end
 	end
 	inst:ListenForEvent("attacked", inst._reisen_uniform_attacked_fn, owner)
@@ -244,6 +250,7 @@ local function apply_uniform_stats(inst, owner)
 end
 
 clear_uniform_stats = function(inst, owner)
+	inst._reisen_uniform_owner = nil
 	if inst._reisen_uniform_attacked_fn ~= nil then
 		inst:RemoveEventCallback("attacked", inst._reisen_uniform_attacked_fn, owner)
 		inst._reisen_uniform_attacked_fn = nil

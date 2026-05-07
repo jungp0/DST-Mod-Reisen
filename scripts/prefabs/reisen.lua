@@ -17,7 +17,7 @@ local ReisenConsts = require "reisen_consts"
 local ReisenPerf = require "reisen_perf"
 
 local assets = { Asset("SCRIPT", "scripts/prefabs/player_common.lua") }
-local prefabs = { "manrabbit_tail", "reisen_boostfx", "reisen_petalring", "reisen_critfx", "ghostlyelixir_player_slowregen_fx" }
+local prefabs = { "manrabbit_tail", "reisen_boostfx", "reisen_petalring", "ghostlyelixir_player_slowregen_fx" }
 local start_inv = { "manrabbit_tail", "carrot", "carrot", "carrot", "monsterlasagna" }
 
 -- ════════════════════════════════════════════════════════════════════════
@@ -601,25 +601,26 @@ lunatic = function(inst)
 	ReisenPerf.Bump("reisen.lunatic.calls")
 	local _t_done = ReisenPerf.Begin("reisen.lunatic")
 	local san = inst.components.sanity.current
-	-- Induced insanity (e.g. starvation) forces displayed sanity to 0; mirror that here
-	-- so tier effects match what the player sees on the HUD.
 	if inst.components.sanity.inducedinsanity then
 		san = 0
 	end
 
 	-- Find matching sanity tier (first entry where san > san_min).
 	local tier = nil
-	for _, t in ipairs(REISEN_SANITY_TIERS) do
+	local tier_idx = 0
+	for i, t in ipairs(REISEN_SANITY_TIERS) do
 		if san > t.san_min then
 			tier = t
+			tier_idx = i
 			break
 		end
 	end
 	if tier == nil then
-		tier = REISEN_SANITY_TIER_ZERO  -- san == 0 (none of the above matched)
+		tier = REISEN_SANITY_TIER_ZERO
+		tier_idx = -1
 	end
 
-	-- Apply tier base stats.
+	-- Apply tier base stats (always needed as they may be modified by stack/boost below).
 	inst.components.combat.damagemultiplier = tier.dmg
 	inst.vulnerable                         = tier.vuln
 	inst.components.locomotor.walkspeed     = tier.walk   * TUNING.WILSON_WALK_SPEED
@@ -629,26 +630,29 @@ lunatic = function(inst)
 	inst.components.hunger.hungerrate       = tier.hunger * TUNING.WILSON_HUNGER_RATE
 	inst.components.sanity.dapperness       = tier.dapper * TUNING.DAPPERNESS_MED
 
-	-- Apply tier light.
-	if tier.light ~= nil then
-		inst.entity:AddLight()
-		inst.Light:SetRadius(tier.light.r)
-		inst.Light:SetFalloff(tier.light.fo)
-		inst.Light:SetIntensity(tier.light.it)
-		inst.Light:SetColour(REISEN_LIGHT_R, REISEN_LIGHT_G, REISEN_LIGHT_B)
-		if TheWorld:HasTag("cave") or TheWorld.state.phase == "night" then
-			inst.Light:Enable(true)
-		else
-			inst.Light:Enable(false)
+	-- Apply tier light (only when tier changes or light state changes).
+	local want_light_on = tier.light ~= nil
+		and (TheWorld:HasTag("cave") or TheWorld.state.phase == "night")
+	if tier_idx ~= inst._reisen_cached_tier_idx then
+		inst._reisen_cached_tier_idx = tier_idx
+		if tier.light ~= nil then
+			inst.entity:AddLight()
+			inst.Light:SetRadius(tier.light.r)
+			inst.Light:SetFalloff(tier.light.fo)
+			inst.Light:SetIntensity(tier.light.it)
+			inst.Light:SetColour(REISEN_LIGHT_R, REISEN_LIGHT_G, REISEN_LIGHT_B)
 		end
-	elseif inst.Light ~= nil then
-		inst.Light:Enable(false)
+	end
+	if want_light_on ~= inst._reisen_cached_light_on then
+		inst._reisen_cached_light_on = want_light_on
+		if inst.Light ~= nil then
+			inst.Light:Enable(want_light_on)
+		end
 	end
 
 	local _ls = inst._reisen_lunatic_stack or 0
 
 	-- Zero-san bonus: extra hunger drain when well-fed AND lunatic stack > 0.
-	-- HP regen counterpart requires stack >= MID; both handled independently.
 	if tier == REISEN_SANITY_TIER_ZERO and _ls > 0 then
 		if inst.components.hunger.current > tier.hunger_high_thresh * inst.components.hunger.max then
 			inst.components.hunger.hungerrate = inst.components.hunger.hungerrate * tier.hunger_high_extra_mult
@@ -671,10 +675,6 @@ lunatic = function(inst)
 			inst.components.sanity.dapperness_mult = 1
 		end
 	else
-		-- Charm not worn: always reset immunity flags so that any state left over
-		-- from a previous equip (e.g. after server reload where onbecamehuman clears
-		-- _reisen_charm_worn without going through the normal unequip path) is
-		-- corrected on the next lunatic() call.
 		inst.components.sanity:SetNegativeAuraImmunity(false)
 		inst.components.sanity:SetLightDrainImmune(false)
 		inst.components.sanity.dapperness_mult = 1
@@ -693,45 +693,54 @@ lunatic = function(inst)
 		inst.components.hunger.hungerrate = inst.components.hunger.hungerrate * REISEN_BOOSTED_HUNGER_MULT
 	end
 
-	-- ── Zero-san: reduced work progress and tool durability ─────────────────
-	--  Applies multipliers to CHOP / MINE / HAMMER  when san == 0.
-	--  AddMultiplier is idempotent (SourceModifierList overwrites same key).
-	if tier == REISEN_SANITY_TIER_ZERO then
-		inst.components.workmultiplier:AddMultiplier(ACTIONS.CHOP,   REISEN_ZERO_SAN_WORK_MULT,      inst)
-		inst.components.workmultiplier:AddMultiplier(ACTIONS.MINE,   REISEN_ZERO_SAN_WORK_MULT,      inst)
-		inst.components.workmultiplier:AddMultiplier(ACTIONS.HAMMER, REISEN_ZERO_SAN_WORK_MULT,      inst)
-		inst.components.efficientuser:AddMultiplier(ACTIONS.CHOP,   REISEN_ZERO_SAN_DURABILITY_MULT, inst)
-		inst.components.efficientuser:AddMultiplier(ACTIONS.MINE,   REISEN_ZERO_SAN_DURABILITY_MULT, inst)
-		inst.components.efficientuser:AddMultiplier(ACTIONS.HAMMER, REISEN_ZERO_SAN_DURABILITY_MULT, inst)
-	else
-		inst.components.workmultiplier:RemoveMultiplier(ACTIONS.CHOP,   inst)
-		inst.components.workmultiplier:RemoveMultiplier(ACTIONS.MINE,   inst)
-		inst.components.workmultiplier:RemoveMultiplier(ACTIONS.HAMMER, inst)
-		inst.components.efficientuser:RemoveMultiplier(ACTIONS.CHOP,   inst)
-		inst.components.efficientuser:RemoveMultiplier(ACTIONS.MINE,   inst)
-		inst.components.efficientuser:RemoveMultiplier(ACTIONS.HAMMER, inst)
+	-- Zero-san: reduced work progress and tool durability (cached).
+	local is_zero_san = (tier == REISEN_SANITY_TIER_ZERO)
+	if is_zero_san ~= inst._reisen_cached_zero_san then
+		inst._reisen_cached_zero_san = is_zero_san
+		if is_zero_san then
+			inst.components.workmultiplier:AddMultiplier(ACTIONS.CHOP,   REISEN_ZERO_SAN_WORK_MULT,      inst)
+			inst.components.workmultiplier:AddMultiplier(ACTIONS.MINE,   REISEN_ZERO_SAN_WORK_MULT,      inst)
+			inst.components.workmultiplier:AddMultiplier(ACTIONS.HAMMER, REISEN_ZERO_SAN_WORK_MULT,      inst)
+			inst.components.efficientuser:AddMultiplier(ACTIONS.CHOP,   REISEN_ZERO_SAN_DURABILITY_MULT, inst)
+			inst.components.efficientuser:AddMultiplier(ACTIONS.MINE,   REISEN_ZERO_SAN_DURABILITY_MULT, inst)
+			inst.components.efficientuser:AddMultiplier(ACTIONS.HAMMER, REISEN_ZERO_SAN_DURABILITY_MULT, inst)
+		else
+			inst.components.workmultiplier:RemoveMultiplier(ACTIONS.CHOP,   inst)
+			inst.components.workmultiplier:RemoveMultiplier(ACTIONS.MINE,   inst)
+			inst.components.workmultiplier:RemoveMultiplier(ACTIONS.HAMMER, inst)
+			inst.components.efficientuser:RemoveMultiplier(ACTIONS.CHOP,   inst)
+			inst.components.efficientuser:RemoveMultiplier(ACTIONS.MINE,   inst)
+			inst.components.efficientuser:RemoveMultiplier(ACTIONS.HAMMER, inst)
+		end
 	end
 
-	-- Lunatic weapon durability: multiply combat finiteuses loss (same ACTION as weapon.lua OnAttack path).
-	if _ls > REISEN_LUNATIC_STACK_LOW_THRESH then
-		inst.components.efficientuser:AddMultiplier(
-			ACTIONS.ATTACK, REISEN_LUNATIC_WEAPON_DURABILITY_MULT, REISEN_LUNATIC_WEAPON_DUR_SOURCE)
-	else
-		inst.components.efficientuser:RemoveMultiplier(ACTIONS.ATTACK, REISEN_LUNATIC_WEAPON_DUR_SOURCE)
+	-- Lunatic weapon durability (cached).
+	local want_weapon_dur = _ls > REISEN_LUNATIC_STACK_LOW_THRESH
+	if want_weapon_dur ~= inst._reisen_cached_weapon_dur then
+		inst._reisen_cached_weapon_dur = want_weapon_dur
+		if want_weapon_dur then
+			inst.components.efficientuser:AddMultiplier(
+				ACTIONS.ATTACK, REISEN_LUNATIC_WEAPON_DURABILITY_MULT, REISEN_LUNATIC_WEAPON_DUR_SOURCE)
+		else
+			inst.components.efficientuser:RemoveMultiplier(ACTIONS.ATTACK, REISEN_LUNATIC_WEAPON_DUR_SOURCE)
+		end
 	end
 
-	-- ── High-san: fast PICK/HARVEST/BUILD ───────────────────────────────────
-	--  Tags are checked by SGwilson action handlers.
-	if san > 99 then
-		inst:AddTag("quagmire_fasthands")
-		inst:AddTag("fastbuilder")
-		inst.components.expertsailor:SetRowForceMultiplier(REISEN_HIGH_SAN_ROW_FORCE_MULT)
-		inst.components.expertsailor:SetRowExtraMaxVelocity(REISEN_HIGH_SAN_ROW_EXTRA_MAX_VELOCITY)
-	else
-		inst:RemoveTag("quagmire_fasthands")
-		inst:RemoveTag("fastbuilder")
-		inst.components.expertsailor:SetRowForceMultiplier(nil)
-		inst.components.expertsailor:SetRowExtraMaxVelocity(nil)
+	-- High-san: fast PICK/HARVEST/BUILD and rowing bonuses (cached).
+	local is_high_san = san > 99
+	if is_high_san ~= inst._reisen_cached_high_san then
+		inst._reisen_cached_high_san = is_high_san
+		if is_high_san then
+			inst:AddTag("quagmire_fasthands")
+			inst:AddTag("fastbuilder")
+			inst.components.expertsailor:SetRowForceMultiplier(REISEN_HIGH_SAN_ROW_FORCE_MULT)
+			inst.components.expertsailor:SetRowExtraMaxVelocity(REISEN_HIGH_SAN_ROW_EXTRA_MAX_VELOCITY)
+		else
+			inst:RemoveTag("quagmire_fasthands")
+			inst:RemoveTag("fastbuilder")
+			inst.components.expertsailor:SetRowForceMultiplier(nil)
+			inst.components.expertsailor:SetRowExtraMaxVelocity(nil)
+		end
 	end
 
 	sync_reisen_vuln_absorb_modifier(inst)
@@ -923,12 +932,7 @@ local function reisen_exit_boost_state(inst, was_boosted)
 		inst._reisen_petal_fx = nil
 	end
 	inst._reisen_boost_move_mult = nil
-	if inst._reisen_crit_fx ~= nil then
-		if inst._reisen_crit_fx:IsValid() and inst._reisen_crit_fx.kill_fx ~= nil then
-			inst._reisen_crit_fx:kill_fx()
-		end
-		inst._reisen_crit_fx = nil
-	end
+	-- boostfx handles crit visual; kill_fx removes the whole effect
 	if inst._reisen_boost_aura_fx ~= nil then
 		if inst._reisen_boost_aura_fx:IsValid() and inst._reisen_boost_aura_fx.kill_fx ~= nil then
 			inst._reisen_boost_aura_fx:kill_fx()
@@ -976,33 +980,26 @@ local function reisen_update_lunatic_state(inst)
 
 	if TheWorld ~= nil and TheWorld.ismastersim then
 		-- Track max zone entry/exit for the crit ramp timer.
+		-- Crit visual is integrated into boostfx via start_crit_ramp/stop_crit_ramp.
 		local in_max_zone = inst._reisen_lunatic_boosted == true
 			and (inst._reisen_lunatic_stack or 0) > REISEN_LUNATIC_STACK_HI_THRESH
 		if in_max_zone and inst._reisen_crit_enter_time == nil then
 			inst._reisen_crit_enter_time = GetTime()
-			-- Spawn crit ramp FX; kill any leftover first.
-			if inst._reisen_crit_fx ~= nil then
-				if inst._reisen_crit_fx:IsValid() and inst._reisen_crit_fx.kill_fx ~= nil then
-					inst._reisen_crit_fx:kill_fx()
-				end
-				inst._reisen_crit_fx = nil
-			end
-			local cfx = SpawnPrefab("reisen_critfx")
-			if cfx ~= nil then
-				cfx.entity:SetParent(inst.entity)
-				cfx.Transform:SetPosition(0, 0.35, 0)
-				cfx.crit_start_time = inst._reisen_crit_enter_time
-				cfx.crit_ramp_delay = REISEN_BOOSTED_CRIT_RAMP_DELAY
-				cfx.crit_ramp_time  = REISEN_BOOSTED_CRIT_MAX_TIME
-				inst._reisen_crit_fx = cfx
+			-- Start crit ramp on boostfx
+			if inst._reisen_boost_aura_fx ~= nil
+				and inst._reisen_boost_aura_fx:IsValid()
+				and inst._reisen_boost_aura_fx.start_crit_ramp ~= nil then
+				inst._reisen_boost_aura_fx:start_crit_ramp(
+					REISEN_BOOSTED_CRIT_RAMP_DELAY,
+					REISEN_BOOSTED_CRIT_MAX_TIME)
 			end
 		elseif not in_max_zone and inst._reisen_crit_enter_time ~= nil then
 			inst._reisen_crit_enter_time = nil
-			if inst._reisen_crit_fx ~= nil then
-				if inst._reisen_crit_fx:IsValid() and inst._reisen_crit_fx.kill_fx ~= nil then
-					inst._reisen_crit_fx:kill_fx()
-				end
-				inst._reisen_crit_fx = nil
+			-- Stop crit ramp on boostfx
+			if inst._reisen_boost_aura_fx ~= nil
+				and inst._reisen_boost_aura_fx:IsValid()
+				and inst._reisen_boost_aura_fx.stop_crit_ramp ~= nil then
+				inst._reisen_boost_aura_fx:stop_crit_ramp()
 			end
 		end
 		lunatic(inst)
@@ -1060,6 +1057,13 @@ local function reisen_on_hit_other(inst, data)
 	-- MODE B (Slow Field) AoE hits must not grant stack; MODE A hits do grant
 	-- stack via the normal onhitother path so the decay task is properly reset.
 	if inst._reisen_no_stack_aoe then return end
+	-- PvP: hitting another player must not feed the lunatic stack pool.
+	-- This both prevents PvP snowballing (one cast → free stacks → more casts)
+	-- and is robust against future code paths that may damage players directly.
+	if data ~= nil and data.target ~= nil
+		and (data.target:HasTag("player") or data.target:HasTag("playerghost")) then
+		return
+	end
 	if inst.components.hunger ~= nil and inst.components.hunger.current <= 0 then return end
 
 	-- Throttle: ignore hits that arrive faster than REISEN_HIT_THROTTLE_INTERVAL.
@@ -1338,13 +1342,19 @@ end
 -- ── Booster application ──────────────────────────────────────────────────
 
 local function reisen_spawn_boost_fx(inst)
-	-- Kill any leftover aura (e.g. boost re-triggered before it expired).
-	if inst._reisen_boost_aura_fx ~= nil then
-		if inst._reisen_boost_aura_fx:IsValid() and inst._reisen_boost_aura_fx.kill_fx ~= nil then
-			inst._reisen_boost_aura_fx:kill_fx()
+	-- If already have valid boost aura: retrigger handles animation + layer + progress
+	if inst._reisen_boost_aura_fx ~= nil and inst._reisen_boost_aura_fx:IsValid() then
+		if inst._reisen_boost_aura_fx.retrigger ~= nil then
+			inst._reisen_boost_aura_fx:retrigger()
 		end
-		inst._reisen_boost_aura_fx = nil
+		if inst.SoundEmitter ~= nil then
+			inst.SoundEmitter:PlaySound("dontstarve/common/nightmareAddFuel")
+		end
+		return
 	end
+	-- Cleanup any invalid leftover
+	inst._reisen_boost_aura_fx = nil
+	-- Spawn fresh boost FX
 	local fx = SpawnPrefab("reisen_boostfx")
 	if fx ~= nil then
 		fx.entity:SetParent(inst.entity)
@@ -1368,8 +1378,9 @@ local function reisen_on_booster_applied(inst)
 	end
 	inst._reisen_lunatic_decay_task = inst:DoTaskInTime(
 		reisen_decay_delay(inst, REISEN_LUNATIC_MAX), reisen_lunatic_decay)
-	reisen_update_lunatic_state(inst)
+	-- Spawn fx BEFORE update so start_crit_ramp finds a valid _reisen_boost_aura_fx.
 	reisen_spawn_boost_fx(inst)
+	reisen_update_lunatic_state(inst)
 end
 
 -- ── Eat handler ──────────────────────────────────────────────────────────
@@ -1497,7 +1508,6 @@ local master_postinit = function(inst)
 	inst._reisen_boost_aura_fx            = nil
 	inst._reisen_boost_move_mult          = nil
 	inst._reisen_petal_fx                 = nil
-	inst._reisen_crit_fx                  = nil
 	inst._reisen_lunatic_decay_task       = nil
 	inst._reisen_boosted_heal_guard       = false
 	inst._reisen_kill_hp_accum            = 0
@@ -1509,6 +1519,11 @@ local master_postinit = function(inst)
 	inst._reisen_vuln_cache_vraw          = nil    -- cached inputs for sync_reisen_vuln_absorb_modifier
 	inst._reisen_vuln_cache_ls            = nil
 	inst._reisen_vuln_cache_boost         = nil
+	inst._reisen_cached_tier_idx          = nil    -- cached tier index for lunatic() light optimization
+	inst._reisen_cached_light_on          = nil    -- cached light enabled state
+	inst._reisen_cached_zero_san          = nil    -- cached zero-san work multiplier state
+	inst._reisen_cached_weapon_dur        = nil    -- cached weapon durability multiplier state
+	inst._reisen_cached_high_san          = nil    -- cached high-san tag/sailor state
 	reisen_sync_kill_hp_accum_net(inst)
 
 	inst.components.health:SetMaxHealth(REISEN_MAX_HEALTH)
@@ -1624,12 +1639,20 @@ local master_postinit = function(inst)
 	-- Result is capped at REISEN_KILL_HP_ACCUM_CAP.
 	inst:ListenForEvent("killed", function(i, data)
 		if not TheWorld.ismastersim then return end
+		-- Exclude structures, walls, and non-creature entities.
+		local victim = data and data.victim
+		if victim == nil then return end
+		if victim:HasTag("structure") or victim:HasTag("wall") or victim:HasTag("veggie") then return end
+		-- PvP kills do NOT grant accum: prevents snowballing in PvP servers
+		-- (downed teammate → free accum → cast Mind Blowing → repeat).
+		if victim:HasTag("player") or victim:HasTag("playerghost") then return end
 		local _ls = i._reisen_lunatic_stack or 0
 		if _ls <= 0 then return end
 		local prev_accum = i._reisen_kill_hp_accum or 0
 		local effective_ls = math.min(_ls + 1, REISEN_LUNATIC_MAX)
 		local hp_per_kill = i._reisen_lunatic_boosted and REISEN_KILL_HP_PER_KILL_BOOSTED or REISEN_KILL_HP_PER_KILL
-		local gain = effective_ls * hp_per_kill
+		local boss_mult = victim:HasTag("epic") and 10 or 1
+		local gain = effective_ls * hp_per_kill * boss_mult
 		local new_accum = math.min(prev_accum + gain, REISEN_KILL_HP_ACCUM_CAP)
 		i._reisen_kill_hp_accum = new_accum
 		reisen_sync_kill_hp_accum_net(i)

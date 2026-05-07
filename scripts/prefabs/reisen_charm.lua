@@ -287,6 +287,9 @@ end
 -- No sanity==0 requirement (trigger at any sanity).
 --------------------------------------------------------------------------
 
+-- Reusable scratch table for shadow creature collection (avoids per-call allocation).
+local _charm_shadow_scratch = {}
+
 local function charm_collect_shadow_creatures(x, y, z)
 	local raw = TheSim:FindEntities(
 		x, y, z,
@@ -295,13 +298,15 @@ local function charm_collect_shadow_creatures(x, y, z)
 		CHARM_SHADOW_COUNT_CANT_TAGS,
 		CHARM_SHADOW_COUNT_ONEOF_TAGS
 	)
-	local ents = {}
+	-- Reuse scratch table: clear then populate.
+	local ents = _charm_shadow_scratch
+	for k in pairs(ents) do ents[k] = nil end
 	for _, e in ipairs(raw) do
 		if e ~= nil and e:IsValid()
 			and e.components.health ~= nil
 			and not e.components.health:IsDead()
 		then
-			table.insert(ents, e)
+			ents[#ents + 1] = e
 		end
 	end
 	return ents

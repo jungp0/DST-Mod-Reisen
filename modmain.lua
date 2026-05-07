@@ -9,7 +9,6 @@ PrefabFiles = {
 	"reisen_ointmentfx",
 	"reisen_boostfx",
 	"reisen_petalring",
-	"reisen_critfx",
 
 }
 
@@ -863,6 +862,7 @@ STRINGS.ACTIONS.REISEN_MOON_PORT    = "Moon Port"
 STRINGS.ACTIONS.REISEN_STATS        = "Stats"
 STRINGS.REISEN_STATS_FMT            = "ATK: x%.2f\nSPD: x%.2f\nVULN: %.2f\nACCUM: %d/%d"
 STRINGS.REISEN_ACCUM_FMT            = "ACCUM: %d/%d"
+STRINGS.REISEN_CRIT_MAX_SAY         = "Blade unsheathed!"
 
 AddCharacterRecipe(
 	"reisen_charm",
@@ -1064,6 +1064,12 @@ local DUALGEAR_SHADOW_DMG_PER_STACK  = ReisenConsts.DUALGEAR_SHADOW_DMG_PER_STAC
 local DUALGEAR_SHADOW_DMG_MAX_STACKS = ReisenConsts.DUALGEAR_SHADOW_DMG_MAX_STACKS
 local DUALGEAR_SHADOW_DMG_DURATION   = ReisenConsts.DUALGEAR_SHADOW_DMG_DURATION
 
+-- Named callback for shadow stack expiry (avoids per-hit closure allocation).
+local function _dualgear_shadow_stack_expire(inst)
+	inst._reisen_dualgear_shadow_task   = nil
+	inst._reisen_dualgear_shadow_stacks = 0
+end
+
 AddPlayerPostInit(function(inst)
 	-- Capture any bonusdamagefn the prefab constructor already set (Reisen crit fn).
 	-- This runs after the character's fn(), so the existing fn is already in place.
@@ -1072,11 +1078,12 @@ AddPlayerPostInit(function(inst)
 
 	if inst.components.combat ~= nil then
 		inst.components.combat.bonusdamagefn = function(attacker, target, damage, weapon)
-			local bonus = 0
 			local stacks = attacker._reisen_dualgear_shadow_stacks or 0
-			if stacks > 0 then
-				bonus = stacks * DUALGEAR_SHADOW_DMG_PER_STACK
+			-- Early exit: no stacks and no original fn means no bonus.
+			if stacks == 0 and orig_bonus_fn == nil then
+				return 0
 			end
+			local bonus = stacks * DUALGEAR_SHADOW_DMG_PER_STACK
 			if orig_bonus_fn ~= nil then
 				bonus = bonus + orig_bonus_fn(attacker, target, damage, weapon)
 			end
@@ -1105,11 +1112,7 @@ AddPlayerPostInit(function(inst)
 			i._reisen_dualgear_shadow_task:Cancel()
 		end
 		i._reisen_dualgear_shadow_task = i:DoTaskInTime(
-			DUALGEAR_SHADOW_DMG_DURATION,
-			function(inst2)
-				inst2._reisen_dualgear_shadow_task   = nil
-				inst2._reisen_dualgear_shadow_stacks = 0
-			end)
+			DUALGEAR_SHADOW_DMG_DURATION, _dualgear_shadow_stack_expire)
 	end)
 end)
 
@@ -1198,6 +1201,11 @@ local REISEN_RELEASE_SLOW_DURATION      = ReisenConsts.RELEASE_SLOW_DURATION
 local REISEN_RELEASE_HEAL_ACCUM_CAP          = ReisenConsts.RELEASE_HEAL_ACCUM_CAP
 local REISEN_LUNATIC_MAX                     = ReisenConsts.LUNATIC_MAX
 local REISEN_BOOSTED_AUTO_COLLECT_RADIUS     = ReisenConsts.BOOSTED_AUTO_COLLECT_RADIUS
+local REISEN_PVP_ENABLE_DAMAGE               = ReisenConsts.PVP_ENABLE_DAMAGE
+local REISEN_PVP_ENABLE_SLOW                 = ReisenConsts.PVP_ENABLE_SLOW
+local REISEN_PVP_ENABLE_FEAR                 = ReisenConsts.PVP_ENABLE_FEAR
+local REISEN_PVP_SLOW_RELAX                  = ReisenConsts.PVP_SLOW_RELAX
+local REISEN_RELEASE_HEAL_FRIEND_HEAL_MULT   = ReisenConsts.RELEASE_HEAL_FRIEND_HEAL_MULT
 -- (Old assert: RELEASE_SLOW_STACK_COST < LUNATIC_STACK_MID no longer required for Slow Field gate.)
 -- if REISEN_RELEASE_SLOW_STACK_COST >= REISEN_LUNATIC_STACK_MID then
 --     error("reisen mod: RELEASE_SLOW_STACK_COST must be < LUNATIC_STACK_MID")
@@ -1338,9 +1346,73 @@ local function ReisenApplyFear(ent, duration, source_pos)
     if ent == nil or not ent:IsValid() or duration <= 0 then
         return
     end
+    -- Defensive: players never receive fear, regardless of PvP setting or
+    -- future changes that might add hauntable to the player prefab.
+    -- PVP_ENABLE_FEAR is intentionally locked false in reisen_consts and is
+    -- only kept as a constant so the PvP layered gate is documented end-to-end.
+    if ent:HasTag("player") or ent:HasTag("playerghost") then
+        return
+    end
     if ent.components.hauntable ~= nil and ent.components.hauntable.Panic ~= nil then
         ent.components.hauntable:Panic(duration)
     end
+end
+
+-- ══════════════════════════════════════════════════════════════════════════
+-- PvP helpers (Mind Blowing / Mind Stopper / Moon Port)
+--
+-- Layered gate (all four must pass for hostile-player branch):
+--   1) TheNet:GetPVPEnabled()         -- world setting
+--   2) PVP_ENABLE_<feature>           -- mod-level switches in reisen_consts
+--   3) doer.components.combat:CanTarget(target) -- vanilla team / invincibility
+--   4) target is "player" and not "playerghost"
+-- Damage uses combat.pvp_damagemod (vanilla TUNING.PVP_DAMAGE_MOD = 0.5).
+-- ══════════════════════════════════════════════════════════════════════════
+
+-- True iff `ent` should receive the *hostile* PvP branch (damage / slow).
+-- Returns false for friendly players, ghosts, the doer itself, and when PvP is off.
+local function ReisenIsPvPHostile(doer, ent)
+    if ent == nil or ent == doer or not ent:IsValid() then return false end
+    if not ent:HasTag("player") then return false end
+    if ent:HasTag("playerghost") then return false end
+    if not GLOBAL.TheNet:GetPVPEnabled() then return false end
+    if doer.components.combat == nil then return false end
+    -- combat:CanTarget already considers PvP, team rules, invincibility, ghost, notarget.
+    if not doer.components.combat:CanTarget(ent) then return false end
+    return true
+end
+
+-- True iff `ent` should receive the *friendly* heal branch.
+-- Always excludes the doer (caster heals self once, outside the loop).
+-- In PvP servers, hostile players go to ReisenIsPvPHostile instead.
+local function ReisenIsFriendlyPlayer(doer, ent)
+    if ent == nil or ent == doer or not ent:IsValid() then return false end
+    if not ent:HasTag("player") then return false end
+    if ent:HasTag("playerghost") then return false end
+    if GLOBAL.TheNet:GetPVPEnabled() then
+        -- In PvP, "friendly" = anyone the doer cannot target (allies, teammates).
+        return doer.components.combat == nil
+            or not doer.components.combat:CanTarget(ent)
+    end
+    return true  -- non-PvP: every non-ghost player is an ally
+end
+
+-- Engine-equivalent PvP damage scaling: same multiplier CalcDamage would apply.
+local function ReisenComputePvPDamage(doer, raw_dmg)
+    local pvp_mod = (doer.components.combat ~= nil and doer.components.combat.pvp_damagemod)
+                 or (GLOBAL.TUNING and GLOBAL.TUNING.PVP_DAMAGE_MOD) or 0.5
+    return raw_dmg * pvp_mod
+end
+
+-- Player-only slow strength relaxation:
+--   applied = 1 - (1 - mult) * (1 - PVP_SLOW_RELAX)
+-- mult is "speed factor" (0.5 means 50% speed = 50% slow).
+-- PVP_SLOW_RELAX = 0.5 halves the slow magnitude on players.
+local function ReisenComputePvPSlowMult(slow_mult)
+    local relax = REISEN_PVP_SLOW_RELAX
+    if relax <= 0 then return slow_mult end
+    if relax >= 1 then return 1 end
+    return 1 - (1 - slow_mult) * (1 - relax)
 end
 
 -- ══════════════════════════════════════════════════════════════════════════
@@ -1350,39 +1422,88 @@ end
 
 -- MODE A core: damage + fear + slow AoE around (tx,tz).
 -- Returns true if any enemy was killed (for boost-state trigger).
-local function ReisenDoMindBlowingAoE(doer, tx, tz, accum, is_boosted)
+--
+-- friend_heal_amount: if > 0, heals each non-doer friendly player in the AoE
+-- by this amount (caller pre-multiplies by RELEASE_HEAL_FRIEND_HEAL_MULT).
+-- The doer is NOT healed here (caller already healed self once).
+local function ReisenDoMindBlowingAoE(doer, tx, tz, accum, is_boosted, friend_heal_amount)
     local aoe_radius = is_boosted and REISEN_RELEASE_HEAL_RADIUS_BOOSTED or REISEN_RELEASE_HEAL_RADIUS_MAX
     local dmg_mult = math.max((doer.components.combat ~= nil and doer.components.combat.damagemultiplier) or 1, 0.01)
     local damage_amount = accum * dmg_mult
     local dest_pos = GLOBAL.Vector3(tx, 0, tz)
+    friend_heal_amount = friend_heal_amount or 0
 
+    -- Note: "player" was previously in cant_tags, blanket-excluding all players.
+    -- Now we keep players in the result set and branch per-entity, so:
+    --   - friendly players (non-PvP servers, or PvP allies) → heal
+    --   - hostile players (PvP servers, combat:CanTarget == true) → damage + slow (no fear)
+    --   - playerghost is still excluded (cant_tags) and is never targetable.
     local ents = GLOBAL.TheSim:FindEntities(tx, 0, tz, aoe_radius,
-        nil, {"INLIMBO", "FX", "NOCLICK", "player", "playerghost"})
+        nil, {"INLIMBO", "FX", "NOCLICK", "playerghost"})
     local any_killed = false
     for _, ent in ipairs(ents) do
         if ent ~= nil and ent:IsValid() and ent ~= doer then
-            local is_structure = ent:HasTag("structure") or ent:HasTag("wall")
-            local follower = ent.components.follower
-            local leader = follower ~= nil and follower:GetLeader() or nil
-            local followed_by_player = leader ~= nil and leader:HasTag("player")
-            local is_combat_entity = ent.components.combat ~= nil
-                and not ent:HasTag("companion")
-                and not ent:HasTag("notarget")
-            if is_combat_entity and not is_structure and not followed_by_player then
-                local health = ent.components.health
-                if health ~= nil and not health:IsDead() then
-                    ent.components.combat:GetAttacked(doer, damage_amount, nil)
-                    if health:IsDead() then
-                        any_killed = true
+            if ent:HasTag("player") then
+                -- ── Player branch ────────────────────────────────────────
+                if ReisenIsPvPHostile(doer, ent) and REISEN_PVP_ENABLE_DAMAGE then
+                    -- Hostile (PvP enemy): damage with vanilla pvp_damagemod, then optional slow.
+                    -- Use _reisen_no_stack_aoe so reisen_on_hit_other does not grant a stack
+                    -- for this PvP hit (also belt-and-suspenders against future code paths).
+                    local health = ent.components.health
+                    if health ~= nil and not health:IsDead() then
+                        local final_dmg = ReisenComputePvPDamage(doer, damage_amount)
+                        local prev_no_stack = doer._reisen_no_stack_aoe
+                        doer._reisen_no_stack_aoe = true
+                        ent.components.combat:GetAttacked(doer, final_dmg, nil)
+                        doer._reisen_no_stack_aoe = prev_no_stack
+                        local hit_fx = GLOBAL.SpawnPrefab("sanity_lower")
+                        if hit_fx ~= nil then
+                            local ex, ey, ez = ent.Transform:GetWorldPosition()
+                            hit_fx.Transform:SetPosition(ex, ey, ez)
+                        end
                     end
-                    local hit_fx = GLOBAL.SpawnPrefab("sanity_lower")
-                    if hit_fx ~= nil then
-                        local ex, ey, ez = ent.Transform:GetWorldPosition()
-                        hit_fx.Transform:SetPosition(ex, ey, ez)
+                    if REISEN_PVP_ENABLE_SLOW then
+                        ReisenApplySlow(ent, REISEN_RELEASE_SLOW_DURATION,
+                            ReisenComputePvPSlowMult(REISEN_RELEASE_SLOW_MULT))
+                    end
+                    -- Fear is intentionally NOT applied to players (see ReisenApplyFear guard).
+                elseif friend_heal_amount > 0 and ReisenIsFriendlyPlayer(doer, ent) then
+                    -- Friendly: AoE heal (caster already healed self before this loop).
+                    local health = ent.components.health
+                    if health ~= nil and not health:IsDead() then
+                        health:DoDelta(friend_heal_amount, true, "reisen_release_friend_heal")
+                        local heal_fx = GLOBAL.SpawnPrefab("sanity_raise")
+                        if heal_fx ~= nil then
+                            local ex, ey, ez = ent.Transform:GetWorldPosition()
+                            heal_fx.Transform:SetPosition(ex, ey, ez)
+                        end
                     end
                 end
-                ReisenApplyFear(ent, REISEN_RELEASE_HEAL_FEAR_DURATION, dest_pos)
-                ReisenApplySlow(ent, REISEN_RELEASE_SLOW_DURATION, REISEN_RELEASE_SLOW_MULT)
+            else
+                -- ── Creature / structure branch (unchanged behaviour) ────
+                local is_structure = ent:HasTag("structure") or ent:HasTag("wall")
+                local follower = ent.components.follower
+                local leader = follower ~= nil and follower:GetLeader() or nil
+                local followed_by_player = leader ~= nil and leader:HasTag("player")
+                local is_combat_entity = ent.components.combat ~= nil
+                    and not ent:HasTag("companion")
+                    and not ent:HasTag("notarget")
+                if is_combat_entity and not is_structure and not followed_by_player then
+                    local health = ent.components.health
+                    if health ~= nil and not health:IsDead() then
+                        ent.components.combat:GetAttacked(doer, damage_amount, nil)
+                        if health:IsDead() then
+                            any_killed = true
+                        end
+                        local hit_fx = GLOBAL.SpawnPrefab("sanity_lower")
+                        if hit_fx ~= nil then
+                            local ex, ey, ez = ent.Transform:GetWorldPosition()
+                            hit_fx.Transform:SetPosition(ex, ey, ez)
+                        end
+                    end
+                    ReisenApplyFear(ent, REISEN_RELEASE_HEAL_FEAR_DURATION, dest_pos)
+                    ReisenApplySlow(ent, REISEN_RELEASE_SLOW_DURATION, REISEN_RELEASE_SLOW_MULT)
+                end
             end
         end
     end
@@ -1397,37 +1518,56 @@ end
 
 -- MODE B core: distance-based slow field AoE around (tx,tz), no damage.
 -- Plays the slow-field sound and FX at the target position.
+--
+-- Mode B is non-damaging by design.  In PvP, hostile players still receive
+-- the (relaxed) slow but no damage; friendly players are not slowed (slow on
+-- allies would be hostile and grief-prone).
 local function ReisenDoSlowFieldAoE(doer, tx, tz)
     local aoe_radius = REISEN_RELEASE_HEAL_RADIUS_MAX
     local r_near = REISEN_RELEASE_HEAL_RADIUS_MIN
     local r_span = aoe_radius - r_near  -- guaranteed > 0 by constants
 
+    -- Distance-based slow factor for a given (ex, ez): RADIUS_MIN → strong, RADIUS_MAX → weak.
+    local function compute_slow_mult(ex, ez)
+        local dist = math.sqrt((ex - tx)^2 + (ez - tz)^2)
+        local t = math.max(0, math.min(1, (dist - r_near) / r_span))
+        return REISEN_RELEASE_SLOW_MULT_NEAR
+            + t * (REISEN_RELEASE_SLOW_MULT - REISEN_RELEASE_SLOW_MULT_NEAR)
+    end
+
     -- _reisen_no_stack_aoe prevents stack gain from the 0-damage hit in reisen_on_hit_other.
     doer._reisen_no_stack_aoe = true
+    -- Same player-keep policy as MODE A: filter friendly/hostile per-entity inside the loop.
     local ents = GLOBAL.TheSim:FindEntities(tx, 0, tz, aoe_radius,
-        nil, {"INLIMBO", "FX", "NOCLICK", "player", "playerghost"})
+        nil, {"INLIMBO", "FX", "NOCLICK", "playerghost"})
     for _, ent in ipairs(ents) do
         if ent ~= nil and ent:IsValid() and ent ~= doer then
-            local is_structure = ent:HasTag("structure") or ent:HasTag("wall")
-            local follower = ent.components.follower
-            local leader = follower ~= nil and follower:GetLeader() or nil
-            local followed_by_player = leader ~= nil and leader:HasTag("player")
-            local is_combat_entity = ent.components.combat ~= nil
-                and not ent:HasTag("companion")
-                and not ent:HasTag("notarget")
-            if is_combat_entity and not is_structure and not followed_by_player then
-                local health = ent.components.health
-                if health ~= nil and not health:IsDead() then
-                    -- 0-damage hit: fires on-hit events without dealing damage.
-                    ent.components.combat:GetAttacked(doer, 1, nil)
+            if ent:HasTag("player") then
+                -- Player branch: only hostile PvP targets get slow; allies untouched.
+                if REISEN_PVP_ENABLE_SLOW and ReisenIsPvPHostile(doer, ent) then
+                    local ex, _, ez = ent.Transform:GetWorldPosition()
+                    local slow_mult = compute_slow_mult(ex, ez)
+                    ReisenApplySlow(ent, REISEN_RELEASE_SLOW_DURATION,
+                        ReisenComputePvPSlowMult(slow_mult))
                 end
-                -- Distance-based slow: RADIUS_MIN → 95% slow, RADIUS_MAX → 50% slow.
-                local ex, _, ez = ent.Transform:GetWorldPosition()
-                local dist = math.sqrt((ex - tx)^2 + (ez - tz)^2)
-                local t = math.max(0, math.min(1, (dist - r_near) / r_span))
-                local slow_mult = REISEN_RELEASE_SLOW_MULT_NEAR
-                    + t * (REISEN_RELEASE_SLOW_MULT - REISEN_RELEASE_SLOW_MULT_NEAR)
-                ReisenApplySlow(ent, REISEN_RELEASE_SLOW_DURATION, slow_mult)
+                -- No 0-damage hit on players: Mode B is strictly non-damaging in PvP.
+            else
+                local is_structure = ent:HasTag("structure") or ent:HasTag("wall")
+                local follower = ent.components.follower
+                local leader = follower ~= nil and follower:GetLeader() or nil
+                local followed_by_player = leader ~= nil and leader:HasTag("player")
+                local is_combat_entity = ent.components.combat ~= nil
+                    and not ent:HasTag("companion")
+                    and not ent:HasTag("notarget")
+                if is_combat_entity and not is_structure and not followed_by_player then
+                    local health = ent.components.health
+                    if health ~= nil and not health:IsDead() then
+                        -- 0-damage hit: fires on-hit events without dealing damage.
+                        ent.components.combat:GetAttacked(doer, 1, nil)
+                    end
+                    local ex, _, ez = ent.Transform:GetWorldPosition()
+                    ReisenApplySlow(ent, REISEN_RELEASE_SLOW_DURATION, compute_slow_mult(ex, ez))
+                end
             end
         end
     end
@@ -1497,7 +1637,8 @@ local function ReisenDoReleaseHeal(act)
             doer.components.health:DoDelta(accum * self_heal_frac, true)
         end
 
-        local any_killed = ReisenDoMindBlowingAoE(doer, tx, tz, accum, is_boosted)
+        local friend_heal_amount = accum * self_heal_frac * REISEN_RELEASE_HEAL_FRIEND_HEAL_MULT
+        local any_killed = ReisenDoMindBlowingAoE(doer, tx, tz, accum, is_boosted, friend_heal_amount)
         if accum >= REISEN_RELEASE_HEAL_ACCUM_CAP then
             doer:PushEvent("reisen_boost_triggered")
         end
@@ -1564,12 +1705,13 @@ GLOBAL.ACTIONS.REISEN_RELEASE_HEAL.rmb = true
 GLOBAL.ACTIONS.REISEN_RELEASE_HEAL.distance = ReisenConsts.RELEASE_HEAL_TARGET_DIST
 GLOBAL.ACTIONS.REISEN_RELEASE_HEAL.priority = 10
 GLOBAL.ACTIONS.REISEN_RELEASE_HEAL.do_not_locomote = true
+GLOBAL.ACTIONS.REISEN_RELEASE_HEAL.canforce = true
 
 local function ReisenIsValidReleaseTarget(inst)
     -- Tags are net-synced and safe to read on both client and server.
     -- AddComponentAction("SCENE","combat",...) guarantees inst has a combat component,
-    -- so we only need to exclude non-combatants and friendlies.
-    if inst:HasTag("player") or inst:HasTag("playerghost") then
+    -- so we only need to exclude non-combatants and the doer-as-self case.
+    if inst:HasTag("playerghost") then
         return false
     end
     if inst:HasTag("structure") or inst:HasTag("wall") then
@@ -1579,8 +1721,10 @@ local function ReisenIsValidReleaseTarget(inst)
     if inst:HasTag("companion") or inst:HasTag("notarget") then
         return false
     end
-    -- Any remaining entity with a combat component is a valid target
-    -- (covers moose, mosslings, killer bees, bosses, etc.).
+    -- Players are allowed as the AoE center: in non-PvP servers this is purely
+    -- a tactical "center the heal/damage burst on a teammate" cast; in PvP, the
+    -- per-target branches in ReisenDoMindBlowingAoE / ReisenDoSlowFieldAoE
+    -- decide friend-heal vs hostile-damage based on combat:CanTarget.
     return true
 end
 
@@ -1669,6 +1813,9 @@ local function ReisenDoMoonPort(act)
     if not ReisenPayCost(doer, cost) then return false end
 
     -- MODE A only: consume accum and self-heal (skip self-heal when stack=0).
+    -- moonport_friend_heal mirrors the same gating as the self-heal path: it is
+    -- only active when stack > 0 (otherwise the channel does not "lock in" healing).
+    local moonport_friend_heal = 0
     if accum > 0 then
         doer._reisen_kill_hp_accum = 0
         doer._reisen_kill_hp_accum_net_last_value = 0
@@ -1677,6 +1824,7 @@ local function ReisenDoMoonPort(act)
             local dmg_mult = math.max((doer.components.combat ~= nil and doer.components.combat.damagemultiplier) or 1, 0.01)
             local self_heal_frac = is_boosted and (REISEN_RELEASE_HEAL_BOOSTED_SELF_MULT / dmg_mult) or (1 / dmg_mult)
             doer.components.health:DoDelta(accum * self_heal_frac, true)
+            moonport_friend_heal = accum * self_heal_frac * REISEN_RELEASE_HEAL_FRIEND_HEAL_MULT
         end
     end
 
@@ -1699,7 +1847,7 @@ local function ReisenDoMoonPort(act)
 
     -- AoE at destination.
     if accum > 0 then
-        local any_killed = ReisenDoMindBlowingAoE(doer, tx, tz, accum, is_boosted)
+        local any_killed = ReisenDoMindBlowingAoE(doer, tx, tz, accum, is_boosted, moonport_friend_heal)
         if accum >= REISEN_RELEASE_HEAL_ACCUM_CAP then
             doer:PushEvent("reisen_boost_triggered")
         end

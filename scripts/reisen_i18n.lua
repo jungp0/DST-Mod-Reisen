@@ -121,6 +121,7 @@ local ZH = {
 		SPEECH_CHARM_SHADOWHEART      = "卸下不再消耗耐久。",
 		SPEECH_CHARM_SHADOWHEART_INF  = "被攻击和夜晚都不再召唤。",
 		SPEECH_CHARM_FUEL_EMPTY       = "暗影燃料耗尽。",
+		SPEECH_CRIT_MAX               = "剑刃出鞘！",
 	},
 	t = {
 		SCRAPBOOK_CASUAL = "回復理智有條件：僅在飢餓高於75%時生效。",
@@ -174,6 +175,7 @@ local ZH = {
 		SPEECH_CHARM_SHADOWHEART      = "卸下不再消耗耐久。",
 		SPEECH_CHARM_SHADOWHEART_INF  = "被攻擊和夜晚都不再召喚。",
 		SPEECH_CHARM_FUEL_EMPTY       = "暗影燃料耗盡。",
+		SPEECH_CRIT_MAX               = "劍刃出鞘！",
 	},
 }
 
@@ -248,6 +250,7 @@ local function ApplySpeechDescribe(reisen_speech, z)
 	reisen_speech.ANNOUNCE_REISEN_CHARM_SHADOWHEART     = z.SPEECH_CHARM_SHADOWHEART
 	reisen_speech.ANNOUNCE_REISEN_CHARM_SHADOWHEART_INF = z.SPEECH_CHARM_SHADOWHEART_INF
 	reisen_speech.ANNOUNCE_REISEN_CHARM_FUEL_EMPTY      = z.SPEECH_CHARM_FUEL_EMPTY
+	reisen_speech.ANNOUNCE_REISEN_CRIT_MAX              = z.SPEECH_CRIT_MAX
 end
 
 return {

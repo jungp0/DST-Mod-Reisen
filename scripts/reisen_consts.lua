@@ -82,4 +82,31 @@ return {
 	-- ── Moon Port ─────────────────────────────────────────────────────────
 	-- Right-click empty tile to teleport and release Mind Blowing at destination.
 	MOON_PORT_RANGE = 12,   -- max targeting distance (ground cursor range)
+
+	-- ── PvP behaviour (only meaningful when TheNet:GetPVPEnabled() is true) ─
+	-- Layered gate for player-vs-player effects.  All four conditions must
+	-- pass before a hostile-player branch fires:
+	--   1) TheNet:GetPVPEnabled()             -- world setting (server authoritative)
+	--   2) PVP_ENABLE_<feature>               -- mod-level switches (this section)
+	--   3) doer.components.combat:CanTarget   -- vanilla team/state filter
+	--   4) target is "player" and not "playerghost"
+	-- Damage uses combat.pvp_damagemod (vanilla TUNING.PVP_DAMAGE_MOD = 0.5),
+	-- so balance follows whatever the engine ships.
+	PVP_ENABLE_DAMAGE              = true,    -- Mind Blowing / Moon Port can damage hostile players
+	PVP_ENABLE_SLOW                = true,    -- Mind Blowing / Mind Stopper can slow hostile players
+	PVP_ENABLE_FEAR                = false,   -- locked off: players have no hauntable; never panic players
+	-- Slow strength relaxation for player targets only:
+	--   applied = 1 - (1 - mult) * (1 - PVP_SLOW_RELAX)
+	-- 0.0 = full strength on players (same as creatures)
+	-- 0.5 = half-strength slow (recommended)
+	-- 1.0 = no slow on players
+	PVP_SLOW_RELAX                 = 0.5,
+
+	-- ── Friend heal (Mind Blowing / Moon Port MODE A) ────────────────────
+	-- Each friendly player inside the AoE (excluding the caster, who already
+	-- self-heals once outside the loop) receives:
+	--   accum * self_heal_frac * RELEASE_HEAL_FRIEND_HEAL_MULT
+	-- Independent of TheNet:GetPVPEnabled(): in PvP, only allies (those that
+	-- combat:CanTarget cannot target) are healed; hostile players take damage.
+	RELEASE_HEAL_FRIEND_HEAL_MULT  = 0.5,
 }

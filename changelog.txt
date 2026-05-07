@@ -1,6 +1,9 @@
 Reisen Udongein Inaba | Touhou Project
 
-Changelog (Last Update: 06.05.2026 - Version 3.1.6)
+Changelog (Last Update: 07.05.2026 - Version 3.2.0)
+
+Version 3.2.0 - Release Mind Blowing and Moon Port now heal nearby allies; on PvP servers, hostile players take Mind Blowing damage at the vanilla PvP rate and can be slowed by Mind Stopper. Players are never feared.
+  [中文] 释放心灵风暴和月之相位现在会治疗范围内的友军；在PvP服务器中，敌对玩家会受到心灵风暴的伤害（沿用饥荒原版PvP伤害比例）并可被心灵制止减速。玩家永远不会被恐惧。
 
 Version 3.1.6 - Scrapbook notes refreshed for the Lunatic Vision Ribbon; Moon Rabbit Casual lasts longer; certain Shadow Atrium hearts in the ribbon can calm uniform-and-ribbon nights.
   [中文] 幻视丝带图鉴说明更新；居家服更耐久；丝带内的暗影心房类物品可缓和与月夜制服同穿时的夜晚影响。
@@ -104,6 +107,6 @@ Version 1.3.5 - Minor tweaks and fixes.
 Version 1.3.6 - Updated for newer versions of the game.
 Version 1.3.8 - Minor tweaks for better compatibility with the "A New Reign" update.
 
-Current Mod Version: [3.1.6]
+Current Mod Version: [3.2.0]
 DST Character Mod created by: Senshimi [https://steamcommunity.com/id/Senshimi/]
 Touhou Project Collection: [http://steamcommunity.com/sharedfiles/filedetails/?id=701414094]
