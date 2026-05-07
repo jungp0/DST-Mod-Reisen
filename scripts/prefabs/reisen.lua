@@ -266,6 +266,25 @@ local REISEN_FULLMOON_LUCK_KEY   = "reisen_fullmoon_luck"
 
 local lunatic  -- forward declaration; defined below, referenced by onbecamehuman/onload
 
+-- ── Effective Sanity Value ────────────────────────────────────────────────
+--  Returns the effective sanity value, accounting for:
+--    1. inducedinsanity (nightmare amulet, starvation) → 0
+--    2. SANITY_MODE_LUNACY (alterguardianhat) → enlightenment value
+--    3. Otherwise → normal sanity.current
+--  Use this instead of directly reading sanity.current to ensure lunatic
+--  tiers respond correctly to all sanity-overriding effects.
+local function get_effective_sanity(inst)
+	local sanity = inst.components.sanity
+	if sanity == nil then return 0 end
+	if sanity.inducedinsanity then
+		return 0
+	end
+	if sanity:IsLunacyMode() then
+		return sanity:GetPercent() * sanity.max
+	end
+	return sanity.current
+end
+
 -- ── Carrot helpers ──────────────────────────────────────────────────────
 
 local function is_carrot_food(food)
@@ -398,10 +417,7 @@ local function reisen_get_sanity_stage(inst)
 	if inst == nil or inst.components.sanity == nil then
 		return 5
 	end
-	local s = inst.components.sanity.current or 0
-	if inst.components.sanity.inducedinsanity then
-		s = 0
-	end
+	local s = get_effective_sanity(inst)
 	if s > 75 then
 		return 5
 	elseif s > 50 then
@@ -564,6 +580,15 @@ local function onbecameghost(inst)
 	reisen_sync_kill_hp_accum_net(inst)
 	inst._reisen_crit_enter_time = nil
 	reisen_sync_starving_insanity(inst)
+	-- Clear lunatic() caches so respawn properly reinitializes light and other tier effects.
+	inst._reisen_cached_tier_idx   = nil
+	inst._reisen_cached_light_on   = nil
+	inst._reisen_cached_zero_san   = nil
+	inst._reisen_cached_weapon_dur = nil
+	inst._reisen_cached_high_san   = nil
+	if inst.Light ~= nil then
+		inst.Light:Enable(false)
+	end
 end
 
 local function onsave(inst, data)
@@ -600,10 +625,7 @@ end
 lunatic = function(inst)
 	ReisenPerf.Bump("reisen.lunatic.calls")
 	local _t_done = ReisenPerf.Begin("reisen.lunatic")
-	local san = inst.components.sanity.current
-	if inst.components.sanity.inducedinsanity then
-		san = 0
-	end
+	local san = get_effective_sanity(inst)
 
 	-- Find matching sanity tier (first entry where san > san_min).
 	local tier = nil
@@ -1229,8 +1251,7 @@ end
 local function reisen_molt_note_low_sanity(inst)
 	if not TheWorld.ismastersim then return end
 	if inst._reisen_molt_san_dipped then return end
-	local sanity = inst.components.sanity
-	if sanity ~= nil and sanity.current <= 0 then
+	if get_effective_sanity(inst) <= 0 then
 		inst._reisen_molt_san_dipped = true
 	end
 end
@@ -1267,7 +1288,7 @@ local function reisen_molt_on_world_cycles(inst)
 	end
 
 	local san_fail    = san_dipped
-		or (inst.components.sanity ~= nil and inst.components.sanity.current <= 0)
+		or get_effective_sanity(inst) <= 0
 	local hunger_fail = hunger_dipped
 		or (inst.components.hunger ~= nil and inst.components.hunger.current < ReisenConsts.HUNGER_LOW * inst.components.hunger.max)
 
@@ -1331,6 +1352,7 @@ end
 -- because our cometo fires first.
 local function reisen_apply_meat_knockdown(inst)
 	if inst:HasTag("playerghost") then return end
+	if inst.components.health ~= nil and inst.components.health:IsDead() then return end
 	inst:PushEvent("knockedout")
 	inst:DoTaskInTime(REISEN_MEAT_SLEEP_DURATION, function(i)
 		if i:IsValid() and i.sg ~= nil then
@@ -1423,8 +1445,16 @@ local function oneat(inst, food)
 		and food.components.edible:GetHealth(inst) < 0 then
 		inst._reisen_boosted_meat_trigger_count = (inst._reisen_boosted_meat_trigger_count or 0) + 1
 		if inst._reisen_boosted_meat_trigger_count >= REISEN_BOOSTED_MONSTER_MEAT_TRIGGER_LIMIT then
-			reisen_apply_meat_knockdown(inst)
-			reisen_on_booster_applied(inst)
+			-- Set boosted flag immediately to prevent race conditions during deferred task.
+			inst._reisen_lunatic_boosted = true
+			-- Defer knockdown and full boost application to next frame to avoid
+			-- stategraph conflict with the eating action.
+			inst:DoTaskInTime(0, function(i)
+				if not i:IsValid() or i:HasTag("playerghost") then return end
+				if i.components.health ~= nil and i.components.health:IsDead() then return end
+				reisen_apply_meat_knockdown(i)
+				reisen_on_booster_applied(i)
+			end)
 		end
 		return
 	end
@@ -1581,7 +1611,7 @@ local master_postinit = function(inst)
 		-- Skip entirely when already at full health to avoid firing a healthdelta event
 		-- with data.amount == 0, which external mods see as spurious "+0 health" ticks.
 		if i.components.health.currenthealth >= i.components.health.maxhealth then return end
-		local san = i.components.sanity.current
+		local san = get_effective_sanity(i)
 		if san > 99 then
 			i.components.health:DoDelta(REISEN_HIGH_SAN_REGEN_HP_PER_S * REISEN_HEALTH_REGEN_PERIOD, true)
 		elseif san <= 0 and i.components.hunger ~= nil

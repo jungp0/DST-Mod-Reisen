@@ -77,6 +77,21 @@ local UNIFORM_ATTACK_SANITY_DELTA         = -2.5
 local UNIFORM_ATTACK_SANITY_DELTA_CHARM   = -5
 local REISEN_CHARM_PREFAB                 = "reisen_charm"
 
+-- Returns the effective sanity value, accounting for sanity overrides:
+--   inducedinsanity (nightmare amulet, starvation) → 0
+--   SANITY_MODE_LUNACY (alterguardianhat) → enlightenment value
+local function get_effective_sanity(owner)
+	local sanity = owner ~= nil and owner.components.sanity or nil
+	if sanity == nil then return 0 end
+	if sanity.inducedinsanity then
+		return 0
+	end
+	if sanity:IsLunacyMode() then
+		return sanity:GetPercent() * sanity.max
+	end
+	return sanity.current
+end
+
 local function uniform_attack_sanity_delta(owner)
 	local inv = owner ~= nil and owner.components.inventory or nil
 	if inv == nil then return UNIFORM_ATTACK_SANITY_DELTA end
@@ -101,15 +116,16 @@ local function uniform_update_sanity_penalty(inst, owner)
 	owner.components.sanity:AddSanityPenalty(inst, total)
 end
 
--- Adds or removes the "heavyarmor" tag on the ITEM (inst) based on owner's current sanity.
+-- Adds or removes the "heavyarmor" tag on the ITEM (inst) based on owner's effective sanity.
 -- SGwilson.lua checks inventory:EquipHasTag("heavyarmor") to decide between the
 -- "knockback" (launch/airborne) and "knockbacklanded" (pushed back on ground) states.
 -- The marble suit works by having "heavyarmor" permanently on the item; we apply it
--- conditionally only when sanity == 0.
+-- conditionally only when effective sanity == 0.
 -- The flag _reisen_uniform_knockback_immune tracks whether WE added the tag.
+-- Uses get_effective_sanity to account for inducedinsanity and SANITY_MODE_LUNACY (alterguardianhat).
 local function uniform_update_knockback_immune(inst, owner)
 	if owner.components.sanity == nil then return end
-	if owner.components.sanity.current <= 0 then
+	if get_effective_sanity(owner) <= 0 then
 		if not owner._reisen_uniform_knockback_immune then
 			inst:AddTag("heavyarmor")
 			owner._reisen_uniform_knockback_immune = true
@@ -122,14 +138,15 @@ local function uniform_update_knockback_immune(inst, owner)
 	end
 end
 
--- Switches walk speed between normal and insane tiers based on san = 0.
+-- Switches walk speed between normal and insane tiers based on effective san = 0.
 -- Uses SetExternalSpeedMultiplier so the change is network-synced immediately
 -- (externalspeedmultiplier is a classified net var) rather than waiting for
 -- the next StartWalking() call that equippable.walkspeedmult would require.
+-- Uses get_effective_sanity to account for inducedinsanity and SANITY_MODE_LUNACY (alterguardianhat).
 local UNIFORM_SPEED_KEY = "reisen_uniform"
 local function uniform_update_walkspeed(inst, owner)
 	if owner.components.locomotor == nil then return end
-	local mult = (owner.components.sanity ~= nil and owner.components.sanity.current <= 0)
+	local mult = get_effective_sanity(owner) <= 0
 		and REISEN_UNIFORM_WALKSPEED_MULT_INSANE
 		or  REISEN_UNIFORM_WALKSPEED_MULT
 	owner.components.locomotor:SetExternalSpeedMultiplier(inst, UNIFORM_SPEED_KEY, mult)

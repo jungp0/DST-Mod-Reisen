@@ -82,6 +82,8 @@ return {
 	-- ── Moon Port ─────────────────────────────────────────────────────────
 	-- Right-click empty tile to teleport and release Mind Blowing at destination.
 	MOON_PORT_RANGE = 12,   -- max targeting distance (ground cursor range)
+	MOON_PORT_COOLDOWN = 0.5, -- minimum seconds between casts
+	MOON_PORT_REQUIRE_STACK = true, -- if true, at least 1 lunatic stack required to cast
 
 	-- ── PvP behaviour (only meaningful when TheNet:GetPVPEnabled() is true) ─
 	-- Layered gate for player-vs-player effects.  All four conditions must

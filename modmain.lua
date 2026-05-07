@@ -93,6 +93,10 @@ local TECH = GLOBAL.TECH
 local TheNet = GLOBAL.TheNet
 local EQUIPSLOTS = GLOBAL.EQUIPSLOTS
 local debug = GLOBAL.debug
+local State = GLOBAL.State
+local TimeEvent = GLOBAL.TimeEvent
+local EventHandler = GLOBAL.EventHandler
+local FRAMES = GLOBAL.FRAMES
 
 local ReisenI18n = require "reisen_i18n"
 local ReisenConsts = require "reisen_consts"
@@ -1136,6 +1140,7 @@ end)
 
 -- When Reisen starts a work action (chop / mine / hammer) at zero sanity,
 -- push an event so reisen.lua can fire the speech hint via its cooldown system.
+-- Accounts for sanity overrides: inducedinsanity (nightmare amulet), SANITY_MODE_LUNACY (alterguardianhat).
 AddStategraphPostInit("wilson", function(sg)
     for _, state_name in ipairs({ "chop", "mine", "hammer" }) do
         local state = sg.states[state_name]
@@ -1143,10 +1148,16 @@ AddStategraphPostInit("wilson", function(sg)
             local orig_onenter = state.onenter
             state.onenter = function(inst)
                 if orig_onenter ~= nil then orig_onenter(inst) end
-                if inst:HasTag("reisen")
-                    and inst.components.sanity ~= nil
-                    and inst.components.sanity.current <= 0 then
-                    inst:PushEvent("reisen_zero_san_work")
+                if inst:HasTag("reisen") and inst.components.sanity ~= nil then
+                    local san = inst.components.sanity.current
+                    if inst.components.sanity.inducedinsanity then
+                        san = 0
+                    elseif inst.components.sanity:IsLunacyMode() then
+                        san = inst.components.sanity:GetPercent() * inst.components.sanity.max
+                    end
+                    if san <= 0 then
+                        inst:PushEvent("reisen_zero_san_work")
+                    end
                 end
             end
         end
@@ -1270,6 +1281,8 @@ end
 --
 -- Normal, Enlightenment (SANITY_MODE_LUNACY):
 --   Recover sanity: gain = sanity_cost × (1 − vuln).
+--   Exception: if sanity lacks headroom to absorb the full recovery (current + cost > cap),
+--   drain hunger instead.  Avoids floating-point near-cap freecast and partial-waste cases.
 --
 -- Normal, not Enlightenment:
 --   Deduct sanity; fall back to hunger drain if sanity insufficient.
@@ -1296,7 +1309,20 @@ local function ReisenPayCost(inst, sanity_cost)
     end
 
     if s ~= nil and s.IsLunacyMode ~= nil and s:IsLunacyMode() then
-        s:DoDelta(sanity_cost * (1 - vuln))
+        -- Cost hunger when there is not enough headroom to absorb the full sanity recovery.
+        -- Using (current + cost > cap) rather than (current >= cap) avoids floating-point
+        -- edge cases (e.g. current = 199.9999 vs cap = 200) where DoDelta would be nearly
+        -- a no-op but the skill would still appear free.
+        local cap = s:GetMaxWithPenalty()
+        local effective_cost = sanity_cost * (1 - vuln)
+        if s.current + effective_cost > cap then
+            if inst.components.hunger == nil or inst.components.hunger.current <= 0 then
+                return false
+            end
+            inst.components.hunger:DoDelta(sanity_cost * (-1 + vuln))
+        else
+            s:DoDelta(effective_cost)
+        end
         return true
     end
 
@@ -1702,7 +1728,7 @@ end
 
 AddAction("REISEN_RELEASE_HEAL", STRINGS.ACTIONS.REISEN_RELEASE_HEAL or "Release Mind Blowing", ReisenDoReleaseHeal)
 GLOBAL.ACTIONS.REISEN_RELEASE_HEAL.rmb = true
-GLOBAL.ACTIONS.REISEN_RELEASE_HEAL.distance = ReisenConsts.RELEASE_HEAL_TARGET_DIST
+GLOBAL.ACTIONS.REISEN_RELEASE_HEAL.distance = math.huge
 GLOBAL.ACTIONS.REISEN_RELEASE_HEAL.priority = 10
 GLOBAL.ACTIONS.REISEN_RELEASE_HEAL.do_not_locomote = true
 GLOBAL.ACTIONS.REISEN_RELEASE_HEAL.canforce = true
@@ -1736,30 +1762,187 @@ AddComponentAction("SCENE", "combat", function(inst, doer, actions, right)
     end
 end)
 
+-- ════════════════════════════════════════════════════════════════════════
+--  REISEN MIND BLOWING STATE
+--  Dedicated stategraph state for Mind Blowing / Slow Field release.
+--  Uses pyrocast animation (like castspellmind) but simplified:
+--    - No hide/teleport needed (in-place cast)
+--    - Server/client always enter the same state (no desync)
+--    - Early busy tag removal at 16 frames to avoid animation lock
+-- ════════════════════════════════════════════════════════════════════════
+
+AddStategraphState("wilson", State{
+    name = "reisen_mindblowing",
+    tags = { "doing", "busy", "canrotate" },
+
+    onenter = function(inst)
+        inst.components.locomotor:Stop()
+        inst.AnimState:PlayAnimation("pyrocast_pre")
+        inst.AnimState:PushAnimation("pyrocast", false)
+    end,
+
+    timeline = {
+        TimeEvent(11 * FRAMES, function(inst)
+            inst:PerformBufferedAction()
+        end),
+        TimeEvent(16 * FRAMES, function(inst)
+            inst.sg:RemoveStateTag("busy")
+        end),
+    },
+
+    events = {
+        EventHandler("animqueueover", function(inst)
+            if inst.AnimState:AnimDone() then
+                inst.sg:GoToState("idle")
+            end
+        end),
+    },
+})
+
+AddStategraphState("wilson_client", State{
+    name = "reisen_mindblowing",
+    tags = { "doing", "busy", "canrotate" },
+    server_states = { "reisen_mindblowing" },
+
+    onenter = function(inst)
+        inst.components.locomotor:Stop()
+        inst.AnimState:PlayAnimation("pyrocast_pre")
+        inst.AnimState:PushAnimation("pyrocast_lag", false)
+
+        inst:PerformPreviewBufferedAction()
+        inst.sg:SetTimeout(2)
+    end,
+
+    onupdate = function(inst)
+        if inst.sg:ServerStateMatches() then
+            if inst.entity:FlattenMovementPrediction() then
+                inst.sg:GoToState("idle", "noanim")
+            end
+        elseif inst.bufferedaction == nil then
+            inst.sg:GoToState("idle")
+        end
+    end,
+
+    ontimeout = function(inst)
+        inst:ClearBufferedAction()
+        inst.sg:GoToState("idle")
+    end,
+})
+
 local function ReisenReleaseHealHandler(inst, action)
-    _reisen_dbg(string.format("[REISEN] ReleaseHealHandler: inst=%s sg=%s",
-        tostring(inst), inst.sg ~= nil and inst.sg.currentstate ~= nil and inst.sg.currentstate.name or "nil"))
-    -- Always use castspellmind for both modes (Mind Blowing and Slow Field).
-    --
-    -- Root-cause of the animation freeze:
-    --   The handler runs independently on the server (SGwilson) and on each client
-    --   (SGwilson_client).  The server reads _reisen_kill_hp_accum directly while the
-    --   client reads the net variable _reisen_kill_hp_accum_net, which can be stale due
-    --   to network propagation delay.  When the two sides disagree (one picks
-    --   "castspellmind", the other picks "throw"), the client's castspellmind state
-    --   (which has server_states = { "castspellmind" }) waits for a server-state-match
-    --   that never arrives, freezing the character until its ontimeout fires.  The
-    --   "busy" tag on that prediction state also blocks other actions in the meantime.
-    --
-    -- Fix: return the same state regardless of accum so server and client always agree.
-    -- The actual MODE A (Mind Blowing) vs MODE B (Slow Field) split is decided entirely
-    -- inside ReisenDoReleaseHeal on the server based on the authoritative accum value,
-    -- and is unrelated to which animation state is entered.
-    return "castspellmind"
+    return "reisen_mindblowing"
 end
 
 AddStategraphActionHandler("wilson", GLOBAL.ActionHandler(GLOBAL.ACTIONS.REISEN_RELEASE_HEAL, ReisenReleaseHealHandler))
 AddStategraphActionHandler("wilson_client", GLOBAL.ActionHandler(GLOBAL.ACTIONS.REISEN_RELEASE_HEAL, ReisenReleaseHealHandler))
+
+-- ════════════════════════════════════════════════════════════════════════
+--  REISEN MOON PORT STATE (borrowed from orangestaff/quicktele pattern)
+--  Dedicated stategraph state for Moon Port teleport that:
+--    1. Ensures server/client always enter the same state (no desync)
+--    2. Defines onstartporting/onstopporting callbacks for hide/invuln
+--    3. Uses fixed DoTaskInTime delay to decouple teleport from animation
+--    4. Removes "busy" tag early (18 frames) to avoid animation lock
+-- ════════════════════════════════════════════════════════════════════════
+
+local MOONPORT_BLINK_DELAY = 0.25
+
+AddStategraphState("wilson", State{
+    name = "reisen_moonport",
+    tags = { "doing", "busy" },
+
+    onenter = function(inst)
+        inst.components.locomotor:Stop()
+        inst.AnimState:PlayAnimation("pickup")
+        inst.AnimState:PushAnimation("pickup_pst", false)
+
+        inst.sg.statemem.onstartporting = function()
+            inst.sg:AddStateTag("noattack")
+            if inst.components.health ~= nil then
+                inst.components.health:SetInvincible(true)
+            end
+            if inst.DynamicShadow ~= nil then
+                inst.DynamicShadow:Enable(false)
+            end
+            local x, y, z = inst.Transform:GetWorldPosition()
+            local back_fx = GLOBAL.SpawnPrefab("sand_puff_large_back")
+            if back_fx ~= nil then back_fx.Transform:SetPosition(x, y - 0.1, z) end
+            local front_fx = GLOBAL.SpawnPrefab("sand_puff_large_front")
+            if front_fx ~= nil then front_fx.Transform:SetPosition(x, y, z) end
+            inst:Hide()
+        end
+        inst.sg.statemem.onstopporting = function()
+            inst.sg:RemoveStateTag("noattack")
+            if inst.sg.statemem.endbusy then
+                inst.sg:RemoveStateTag("busy")
+            end
+            if inst.components.health ~= nil then
+                inst.components.health:SetInvincible(false)
+            end
+            if inst.DynamicShadow ~= nil then
+                inst.DynamicShadow:Enable(true)
+            end
+            inst:Show()
+        end
+    end,
+
+    timeline = {
+        TimeEvent(6 * FRAMES, function(inst)
+            inst.sg:RemoveStateTag("busy")
+            inst:PerformBufferedAction()
+        end),
+    },
+
+    events = {
+        EventHandler("animqueueover", function(inst)
+            if inst.AnimState:AnimDone() then
+                inst.sg:GoToState("idle")
+            end
+        end),
+    },
+
+    onexit = function(inst)
+        if inst.sg:HasStateTag("noattack") then
+            if inst.components.health ~= nil then
+                inst.components.health:SetInvincible(false)
+            end
+            if inst.DynamicShadow ~= nil then
+                inst.DynamicShadow:Enable(true)
+            end
+            inst:Show()
+        end
+    end,
+})
+
+AddStategraphState("wilson_client", State{
+    name = "reisen_moonport",
+    tags = { "doing", "busy" },
+    server_states = { "reisen_moonport" },
+
+    onenter = function(inst)
+        inst.components.locomotor:Stop()
+        inst.AnimState:PlayAnimation("pickup")
+        inst.AnimState:PushAnimation("pickup_pst", false)
+
+        inst:PerformPreviewBufferedAction()
+        inst.sg:SetTimeout(2)
+    end,
+
+    onupdate = function(inst)
+        if inst.sg:ServerStateMatches() then
+            if inst.entity:FlattenMovementPrediction() then
+                inst.sg:GoToState("idle", "noanim")
+            end
+        elseif inst.bufferedaction == nil then
+            inst.sg:GoToState("idle")
+        end
+    end,
+
+    ontimeout = function(inst)
+        inst:ClearBufferedAction()
+        inst.sg:GoToState("idle")
+    end,
+})
 
 -- ════════════════════════════════════════════════════════════════════════
 --  REISEN MOON PORT ACTION
@@ -1767,87 +1950,59 @@ AddStategraphActionHandler("wilson_client", GLOBAL.ActionHandler(GLOBAL.ACTIONS.
 --  teleport to the cursor position and release Mind Blowing there.
 --  Available whenever accum > 0; stack may be 0.
 --  stack = 0 → skip self-heal, use normal (non-boosted) mode.
---  The cast animation (castspellmind) plays before the teleport.
 -- ════════════════════════════════════════════════════════════════════════
 
--- Returns true when the player is in Enlightenment (SANITY_MODE_LUNACY).
--- MODE A (accum > 0): teleport + damage AoE.
--- MODE B (accum = 0): teleport + Slow Field, no stack requirement in Enlightenment.
+-- Returns true when the player can use Moon Port.
+-- Checks: not ghost, in Enlightenment, and (if MOON_PORT_REQUIRE_STACK) has stack.
+-- Uses net var for stack check to ensure client/server agreement.
 local function ReisenCanMoonPort(inst)
     if inst == nil or inst.prefab ~= "reisen" then return false end
     if inst:HasTag("playerghost") then return false end
     if not ReisenIsEnlightened(inst) then return false end
+    if ReisenConsts.MOON_PORT_REQUIRE_STACK then
+        local stack
+        if GLOBAL.TheWorld.ismastersim then
+            stack = inst._reisen_lunatic_stack or 0
+        else
+            stack = inst._reisen_lunatic_net ~= nil and inst._reisen_lunatic_net:value() or 0
+        end
+        if stack <= 0 then return false end
+    end
     return true
 end
 
--- Moon Port: same logic as ReleaseHeal but targeting a ground position chosen
--- by the player, with a teleport prepended and stack restrictions removed.
-local function ReisenDoMoonPort(act)
-    local doer = act.doer
-    if doer == nil or doer.prefab ~= "reisen" then
-        _reisen_dbg("[REISEN] MoonPort: SKIP – doer nil or not reisen")
-        return false
-    end
-    if not GLOBAL.TheWorld.ismastersim then
-        _reisen_dbg("[REISEN] MoonPort: client side, returning true")
-        return true
-    end
-    if not ReisenIsEnlightened(doer) then
-        _reisen_dbg("[REISEN] MoonPort: ABORT – not in Enlightenment")
-        return false
-    end
+-- Callback executed after MOONPORT_BLINK_DELAY; performs the actual teleport
+-- and AoE effects. Called via DoTaskInTime to decouple from animation frames.
+local function ReisenMoonPortOnBlinked(doer, tx, tz, accum, is_boosted, moonport_friend_heal)
+    if doer == nil or not doer:IsValid() then return end
 
-    local actionpt = act:GetActionPoint()
-    if actionpt == nil then
-        _reisen_dbg("[REISEN] MoonPort: ABORT – act.pos nil")
-        return false
-    end
-    local tx, tz = actionpt.x, actionpt.z
-    local accum = doer._reisen_kill_hp_accum or 0
-    local stack = doer._reisen_lunatic_stack or 0
-    local is_boosted = stack > 0 and doer._reisen_lunatic_boosted == true
-    _reisen_dbg(string.format("[REISEN] MoonPort: stack=%d accum=%d boosted=%s", stack, accum, tostring(is_boosted)))
-
-    -- Pay cost before any irreversible action.
-    local cost = accum > 0 and REISEN_RELEASE_HEAL_SANITY_COST or REISEN_RELEASE_SLOW_SANITY_COST
-    if not ReisenPayCost(doer, cost) then return false end
-
-    -- MODE A only: consume accum and self-heal (skip self-heal when stack=0).
-    -- moonport_friend_heal mirrors the same gating as the self-heal path: it is
-    -- only active when stack > 0 (otherwise the channel does not "lock in" healing).
-    local moonport_friend_heal = 0
-    if accum > 0 then
-        doer._reisen_kill_hp_accum = 0
-        doer._reisen_kill_hp_accum_net_last_value = 0
-        if doer._reisen_kill_hp_accum_net ~= nil then doer._reisen_kill_hp_accum_net:set(0) end
-        if stack > 0 and doer.components.health ~= nil then
-            local dmg_mult = math.max((doer.components.combat ~= nil and doer.components.combat.damagemultiplier) or 1, 0.01)
-            local self_heal_frac = is_boosted and (REISEN_RELEASE_HEAL_BOOSTED_SELF_MULT / dmg_mult) or (1 / dmg_mult)
-            doer.components.health:DoDelta(accum * self_heal_frac, true)
-            moonport_friend_heal = accum * self_heal_frac * REISEN_RELEASE_HEAL_FRIEND_HEAL_MULT
+    -- Call stategraph callback to restore visibility and remove invincibility.
+    if doer.sg ~= nil and doer.sg.statemem ~= nil and doer.sg.statemem.onstopporting ~= nil then
+        doer.sg.statemem.onstopporting()
+    else
+        if doer.components.health ~= nil then
+            doer.components.health:SetInvincible(false)
         end
+        if doer.DynamicShadow ~= nil then
+            doer.DynamicShadow:Enable(true)
+        end
+        doer:Show()
     end
 
-    -- Departure FX + teleport.
-    local px, py, pz = doer.Transform:GetWorldPosition()
-    if doer.SoundEmitter ~= nil then doer.SoundEmitter:PlaySound("maxwell_rework/shadow_magic/cast") end
-    local cast_fx = GLOBAL.SpawnPrefab("attune_out_fx")
-    if cast_fx ~= nil then cast_fx.Transform:SetPosition(px, py, pz) end
+    -- Execute teleport.
+    if doer.Physics ~= nil then
+        doer.Physics:Teleport(tx, 0, tz)
+    else
+        doer.Transform:SetPosition(tx, 0, tz)
+    end
 
-    if doer.Physics ~= nil then doer.Physics:Teleport(tx, 0, tz)
-    else doer.Transform:SetPosition(tx, 0, tz) end
-
-    -- Post-arrival invincibility: 8 frames ≈ 0.27 s.
-    if doer.components.health ~= nil then doer.components.health:SetInvincible(true) end
-    doer:DoTaskInTime(8 / 30, function(p)
-        if p ~= nil and p:IsValid() and p.components.health ~= nil then p.components.health:SetInvincible(false) end
-    end)
+    -- Arrival FX.
     local arrive_fx = GLOBAL.SpawnPrefab("statue_transition_2")
     if arrive_fx ~= nil then arrive_fx.Transform:SetPosition(tx, 0, tz) end
 
     -- AoE at destination.
     if accum > 0 then
-        local any_killed = ReisenDoMindBlowingAoE(doer, tx, tz, accum, is_boosted, moonport_friend_heal)
+        ReisenDoMindBlowingAoE(doer, tx, tz, accum, is_boosted, moonport_friend_heal)
         if accum >= REISEN_RELEASE_HEAL_ACCUM_CAP then
             doer:PushEvent("reisen_boost_triggered")
         end
@@ -1863,25 +2018,131 @@ local function ReisenDoMoonPort(act)
         if type(speech) == "string" and speech ~= "" then doer.components.talker:Say(speech) end
     end
 
-    _reisen_dbg("[REISEN] MoonPort: DONE – returning true")
+    _reisen_dbg("[REISEN] MoonPort: blink complete")
+end
+
+-- Moon Port: same logic as ReleaseHeal but targeting a ground position chosen
+-- by the player, with a teleport prepended and stack restrictions removed.
+-- Uses the orangestaff callback pattern: stategraph defines onstartporting/onstopporting,
+-- this action fn calls them and schedules the teleport via DoTaskInTime.
+local function ReisenDoMoonPort(act)
+    local doer = act.doer
+    if doer == nil or doer.prefab ~= "reisen" then
+        _reisen_dbg("[REISEN] MoonPort: SKIP – doer nil or not reisen")
+        return false
+    end
+    if not GLOBAL.TheWorld.ismastersim then
+        _reisen_dbg("[REISEN] MoonPort: client side, returning true")
+        return true
+    end
+    if not ReisenIsEnlightened(doer) then
+        _reisen_dbg("[REISEN] MoonPort: ABORT – not in Enlightenment")
+        return false
+    end
+
+    local now = GLOBAL.GetTime()
+    if doer._reisen_moonport_cd_end ~= nil and now < doer._reisen_moonport_cd_end then
+        _reisen_dbg("[REISEN] MoonPort: ABORT – on cooldown")
+        return true  -- return true to avoid client freeze; action simply does nothing
+    end
+
+    local stack = doer._reisen_lunatic_stack or 0
+    if ReisenConsts.MOON_PORT_REQUIRE_STACK and stack <= 0 then
+        _reisen_dbg("[REISEN] MoonPort: ABORT – no stack (server recheck)")
+        return true  -- return true to avoid client freeze; action simply does nothing
+    end
+
+    local actionpt = act:GetActionPoint()
+    if actionpt == nil then
+        _reisen_dbg("[REISEN] MoonPort: ABORT – act.pos nil")
+        return false
+    end
+    local tx, tz = actionpt.x, actionpt.z
+    local accum = doer._reisen_kill_hp_accum or 0
+    local is_boosted = stack > 0 and doer._reisen_lunatic_boosted == true
+    _reisen_dbg(string.format("[REISEN] MoonPort: stack=%d accum=%d boosted=%s", stack, accum, tostring(is_boosted)))
+
+    -- Range check is done client-side in GetPointSpecialActions; server trusts it.
+    -- This avoids sync issues where server clamps position but client doesn't know.
+
+    -- Validate target position before committing.
+    if not GLOBAL.TheWorld.Map:IsPassableAtPoint(tx, 0, tz) then
+        _reisen_dbg("[REISEN] MoonPort: ABORT – target not passable")
+        return false
+    end
+
+    -- Pay cost before any irreversible action.
+    local cost = accum > 0 and REISEN_RELEASE_HEAL_SANITY_COST or REISEN_RELEASE_SLOW_SANITY_COST
+    if not ReisenPayCost(doer, cost) then return false end
+
+    -- Stamp cooldown after all early-exit checks pass.
+    doer._reisen_moonport_cd_end = now + ReisenConsts.MOON_PORT_COOLDOWN
+
+    -- MODE A only: consume accum and self-heal (skip self-heal when stack=0).
+    local moonport_friend_heal = 0
+    if accum > 0 then
+        doer._reisen_kill_hp_accum = 0
+        doer._reisen_kill_hp_accum_net_last_value = 0
+        if doer._reisen_kill_hp_accum_net ~= nil then doer._reisen_kill_hp_accum_net:set(0) end
+        if stack > 0 and doer.components.health ~= nil then
+            local dmg_mult = math.max((doer.components.combat ~= nil and doer.components.combat.damagemultiplier) or 1, 0.01)
+            local self_heal_frac = is_boosted and (REISEN_RELEASE_HEAL_BOOSTED_SELF_MULT / dmg_mult) or (1 / dmg_mult)
+            doer.components.health:DoDelta(accum * self_heal_frac, true)
+            moonport_friend_heal = accum * self_heal_frac * REISEN_RELEASE_HEAL_FRIEND_HEAL_MULT
+        end
+    end
+
+    -- Departure FX.
+    local px, py, pz = doer.Transform:GetWorldPosition()
+    if doer.SoundEmitter ~= nil then doer.SoundEmitter:PlaySound("maxwell_rework/shadow_magic/cast") end
+    local cast_fx = GLOBAL.SpawnPrefab("attune_out_fx")
+    if cast_fx ~= nil then cast_fx.Transform:SetPosition(px, py, pz) end
+
+    -- Call stategraph callback to hide character and set invincibility.
+    if doer.sg ~= nil and doer.sg.statemem ~= nil and doer.sg.statemem.onstartporting ~= nil then
+        doer.sg.statemem.onstartporting()
+    else
+        if doer.components.health ~= nil then
+            doer.components.health:SetInvincible(true)
+        end
+        if doer.DynamicShadow ~= nil then
+            doer.DynamicShadow:Enable(false)
+        end
+        doer:Hide()
+    end
+
+    -- Schedule the actual teleport after MOONPORT_BLINK_DELAY.
+    doer:DoTaskInTime(MOONPORT_BLINK_DELAY, ReisenMoonPortOnBlinked, tx, tz, accum, is_boosted, moonport_friend_heal)
+
+    _reisen_dbg("[REISEN] MoonPort: blink scheduled – returning true")
     return true
 end
 
--- Two action definitions share the same fn; only do_not_locomote differs.
--- Using two static objects avoids mutating global action state at runtime,
--- which would be a bug when multiple Reisen players are in the same shard.
+-- Single action for both normal and boosted Moon Port.
+-- Range clamping for normal mode is done client-side in GetPointSpecialActions,
+-- so the server always receives an already-valid position; no second action needed.
 AddAction("REISEN_MOON_PORT", STRINGS.ACTIONS.REISEN_MOON_PORT or "Moon Port", ReisenDoMoonPort)
 GLOBAL.ACTIONS.REISEN_MOON_PORT.rmb               = true
-GLOBAL.ACTIONS.REISEN_MOON_PORT.distance          = ReisenConsts.MOON_PORT_RANGE
+GLOBAL.ACTIONS.REISEN_MOON_PORT.distance          = math.huge
 GLOBAL.ACTIONS.REISEN_MOON_PORT.priority          = 9
-GLOBAL.ACTIONS.REISEN_MOON_PORT.encumbered_valid  = true  -- allow use while heavylifting (carrying portable structures)
+GLOBAL.ACTIONS.REISEN_MOON_PORT.do_not_locomote   = true
+GLOBAL.ACTIONS.REISEN_MOON_PORT.encumbered_valid  = true
 
-AddAction("REISEN_MOON_PORT_BOOSTED", STRINGS.ACTIONS.REISEN_MOON_PORT or "Moon Port", ReisenDoMoonPort)
-GLOBAL.ACTIONS.REISEN_MOON_PORT_BOOSTED.rmb               = true
-GLOBAL.ACTIONS.REISEN_MOON_PORT_BOOSTED.distance          = ReisenConsts.MOON_PORT_RANGE
-GLOBAL.ACTIONS.REISEN_MOON_PORT_BOOSTED.priority          = 9
-GLOBAL.ACTIONS.REISEN_MOON_PORT_BOOSTED.do_not_locomote   = true
-GLOBAL.ACTIONS.REISEN_MOON_PORT_BOOSTED.encumbered_valid  = true  -- allow use while heavylifting (carrying portable structures)
+-- Clamp target position to MOON_PORT_RANGE for normal mode (like spear_wathgrithr_lightning).
+-- This ensures both client and server use the same clamped position, avoiding sync issues.
+local function ReisenClampMoonPortTarget(inst, target_pos)
+    local ix, _, iz = inst.Transform:GetWorldPosition()
+    local dx = target_pos.x - ix
+    local dz = target_pos.z - iz
+    local dist_sq = dx * dx + dz * dz
+    local range = ReisenConsts.MOON_PORT_RANGE
+    if dist_sq <= range * range then
+        return target_pos
+    end
+    local dist = math.sqrt(dist_sq)
+    local scale = range / dist
+    return GLOBAL.Vector3(ix + dx * scale, 0, iz + dz * scale)
+end
 
 -- AddComponentAction("WORLD", fn) does NOT handle ground right-clicks in DST.
 -- Empty-tile right-click goes through playeractionpicker:GetPointSpecialActions →
@@ -1896,18 +2157,18 @@ AddClassPostConstruct("components/playeractionpicker", function(self)
             and pos ~= nil
             and ReisenCanMoonPort(s.inst)
         then
-            local px = pos.x or 0
-            local pz = pos.z or 0
+            local is_boosted = s.inst._reisen_lunatic_boosted_net ~= nil
+                and s.inst._reisen_lunatic_boosted_net:value() == true
+
+            -- Normal mode: clamp cursor to MOON_PORT_RANGE (boosted: unlimited)
+            local target_pos = is_boosted and pos or ReisenClampMoonPortTarget(s.inst, pos)
+            local tx, tz = target_pos.x or 0, target_pos.z or 0
+
             local world = GLOBAL.TheWorld
             if world ~= nil and world.Map ~= nil
-                and world.Map:IsPassableAtPoint(px, 0, pz)
+                and world.Map:IsPassableAtPoint(tx, 0, tz)
             then
-                local is_boosted = s.inst._reisen_lunatic_boosted_net ~= nil
-                    and s.inst._reisen_lunatic_boosted_net:value() == true
-                local action = is_boosted
-                    and GLOBAL.ACTIONS.REISEN_MOON_PORT_BOOSTED
-                    or  GLOBAL.ACTIONS.REISEN_MOON_PORT
-                return s:SortActionList({ action }, pos, useitem)
+                return s:SortActionList({ GLOBAL.ACTIONS.REISEN_MOON_PORT }, target_pos, useitem)
             end
         end
         return orig(s, pos, useitem, right, usereticulepos)
@@ -1915,13 +2176,11 @@ AddClassPostConstruct("components/playeractionpicker", function(self)
 end)
 
 local function ReisenMoonPortHandler(inst, action)
-    return "castspellmind"
+    return "reisen_moonport"
 end
 
 AddStategraphActionHandler("wilson", GLOBAL.ActionHandler(GLOBAL.ACTIONS.REISEN_MOON_PORT, ReisenMoonPortHandler))
 AddStategraphActionHandler("wilson_client", GLOBAL.ActionHandler(GLOBAL.ACTIONS.REISEN_MOON_PORT, ReisenMoonPortHandler))
-AddStategraphActionHandler("wilson", GLOBAL.ActionHandler(GLOBAL.ACTIONS.REISEN_MOON_PORT_BOOSTED, ReisenMoonPortHandler))
-AddStategraphActionHandler("wilson_client", GLOBAL.ActionHandler(GLOBAL.ACTIONS.REISEN_MOON_PORT_BOOSTED, ReisenMoonPortHandler))
 
 -- ════════════════════════════════════════════════════════════════════════
 --  REISEN BOOSTED AUTO-COLLECT (PICK / HARVEST)
