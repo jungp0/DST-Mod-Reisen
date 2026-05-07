@@ -2,8 +2,8 @@ Reisen Udongein Inaba | Touhou Project
 
 Changelog (Last Update: 07.05.2026 - Version 3.2.0)
 
-Version 3.2.0 - Release Mind Blowing and Moon Port now heal nearby allies; on PvP servers, hostile players take Mind Blowing damage at the vanilla PvP rate and can be slowed by Mind Stopper. Players are never feared. You can cast Release Mind Blowing on another survivor to center the burst on them. In PvP, hitting or killing players no longer builds combo stacks or kill-charge toward the next release; epic kills grant much more charge instead. While boosted at high stacks, the aura layers through the crit buildup and ends in a gold burst with a short battle line; triggering boost again while already powered replays the flair without resetting the whole aura. Kills that are only walls, structures, or veggie plants no longer add release charge.
-  [中文] 释放心灵风暴与月之相位治疗友军；PvP 下敌对玩家受心灵风暴伤害（原版比例）并可被心灵制止减速；玩家不会被恐惧。释放心灵风暴可以以其他幸存者为落点。PvP 中击打或击杀玩家不再增加连击层数与击杀蓄能；击杀史诗敌人获得更多蓄能。高栈强化时光环随暴击过程出现环层并以金色爆发收尾，满层会触发台词（简体为「剑刃出鞘」）；已在强化时再触发会重播动效而不整段拆掉光环。墙体、建筑与蔬菜类植物击杀不再增加心灵风暴蓄能。
+Version 3.2.0 - Release Mind Blowing and Moon Port heal nearby allies; on PvP, hostile players take Mind Blowing damage at the vanilla rate and can be slowed by Mind Stopper. Players are never feared. Release can target survivors; PvP no longer stacks or charges off player fights (epic kills pay more); boosted crit visuals and re-trigger refreshed; walls, structures, and veggie plants do not add release charge.
+  [中文] 释放心灵风暴与月之相位治疗友军；PvP 下敌对玩家受心灵风暴伤害（原版比例）并可被心灵制止减速；玩家不会被恐惧。可对幸存者施放；PvP 中击打玩家不再叠层/蓄能（史诗击杀加成更高）；强化暴击与再触发表现更新；墙体、建筑与蔬菜类击杀不计蓄能。
 
 Version 3.1.6 - Scrapbook notes refreshed for the Lunatic Vision Ribbon; Moon Rabbit Casual lasts longer; certain Shadow Atrium hearts in the ribbon can calm uniform-and-ribbon nights.
   [中文] 幻视丝带图鉴说明更新；居家服更耐久；丝带内的暗影心房类物品可缓和与月夜制服同穿时的夜晚影响。
