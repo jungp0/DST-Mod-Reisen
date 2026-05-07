@@ -3,7 +3,7 @@ Reisen Udongein Inaba | Touhou Project
 Changelog (Last Update: 07.05.2026 - Version 3.2.0)
 
 Version 3.2.0 - Release Mind Blowing and Moon Port heal nearby allies; on PvP, hostile players take Mind Blowing damage at the vanilla rate and can be slowed by Mind Stopper. Players are never feared. Release can target survivors; PvP no longer stacks or charges off player fights (epic kills pay more); boosted crit visuals and re-trigger refreshed; walls, structures, and veggie plants do not add release charge.
-  [中文] 释放心灵风暴与月之相位治疗友军；PvP 下敌对玩家受心灵风暴伤害（原版比例）并可被心灵制止减速；玩家不会被恐惧。可对幸存者施放；PvP 中击打玩家不再叠层/蓄能（史诗击杀加成更高）；强化暴击与再触发表现更新；墙体、建筑与蔬菜类击杀不计蓄能。
+  [中文] 释放心灵风暴与月之相位治疗友军；PvP 下敌对玩家受心灵风暴伤害（原版比例）并可被心灵制止减速；玩家不会被恐惧。可对幸存者施放；PvP 中对阵玩家不再叠层或蓄能（史诗击杀加成更高）；强化暴击与再触发表现更新；墙体、建筑与蔬菜类击杀不计蓄能。
 
 Version 3.1.6 - Scrapbook notes refreshed for the Lunatic Vision Ribbon; Moon Rabbit Casual lasts longer; certain Shadow Atrium hearts in the ribbon can calm uniform-and-ribbon nights.
   [中文] 幻视丝带图鉴说明更新；居家服更耐久；丝带内的暗影心房类物品可缓和与月夜制服同穿时的夜晚影响。
