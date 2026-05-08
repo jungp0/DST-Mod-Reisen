@@ -41,7 +41,7 @@ return {
 	RELEASE_HEAL_RADIUS_MAX   = 4,     -- Mind Blowing AoE radius
 
 	-- Mind Blowing (accum > 0): fixed fear duration.
-	RELEASE_HEAL_FEAR_DURATION = 10.0,
+	RELEASE_HEAL_FEAR_DURATION = 6.5,
 	-- Self-heal fraction is now dynamic: 1 / damagemultiplier (higher damage → less self-heal).
 	-- RELEASE_HEAL_SELF_FRACTION removed; the fraction is computed at cast time in modmain.lua.
 	RELEASE_HEAL_SANITY_COST  = 5,    -- sanity cost for Mind Blowing

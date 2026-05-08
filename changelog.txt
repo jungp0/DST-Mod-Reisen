@@ -2,8 +2,8 @@ Reisen Udongein Inaba | Touhou Project
 
 Changelog (Last Update: 09.05.2026 - Version 3.2.2)
 
-Version 3.2.2 - The Lunatic Vision Ribbon now reacts to a socketed Shadow Atrium or Possessed Shadow Atrium: a soft purple aura whose radius grows with low Sanity (up to 2.5 at zero Sanity); with a Possessed Shadow Atrium, every two auto-consumed fuel pieces also yield a Dark Petal into the wearer's inventory. Reisen can craft Dried Dark Petals from 1 Cut Grass and 4 Nightmare Fuel. Dodging no longer flickers a brief hit-stun on remote clients; AoE entity scans (Mind Blowing, boosted PICK / HARVEST / PICKUP) and the boost FX run on cheaper server paths. Sanity overrides (Nightmare Amulet, Alter Guardian Hat) are now read through one shared "effective Sanity" helper across the mod, so Mind Blowing cost no longer secretly bleeds Sanity while the HUD shows zero.
-  [中文] 幻视丝带新增镶嵌反应：装入暗影心房或附身暗影心房后，佩戴者周身散发柔和紫光，半径随低理智档位增大（理智为 0 时最大约 2.5）；附身暗影心房在位时，每自动消耗两份燃料额外向背包补给一枚邪恶花瓣。新增配方：邪恶花瓣（干） = 1 茎草 + 4 噩梦燃料。闪避时联机端不再短暂播放受击动作；范围伤害（心灵风暴、强化下采集）与强化光环改用更省的服务端处理。噩梦护符、异化守护者帽子等理智覆盖效果统一走"有效理智"函数，心灵风暴消耗不会再在 HUD 显示为 0 时偷偷扣理智。
+Version 3.2.2 - Lunatic Vision Ribbon: with a Shadow or Possessed Shadow Atrium socketed, the soft glow is a gentler lilac tint, scales with effective low Sanity as a share of your maximum pool (not a single fixed raw-Sanity band), and only appears at surface night or while underground; at full drain it still reaches about a 2.5-radius pool of light. Possessed sockets still mint a Dark Petal every two auto-consumed fuel ticks, and scrapbook lines now spell out embedded night sight. Dried Evil Petals crafting gets matching recipe flavour text (4 Nightmare Fuel, 1 Cut Grass). Dodging no longer flashes a brief hit-stun state on distant clients; AoE lookups for Mind Blowing and boosted PICK/HARVEST/PICKUP—and the boosted aura effect—stay on lighter server paths. Nightmare Amulet, Alter Guardian Hat, and similar overrides funnel through one effective-Sanity helper so Mind Blowing no longer trims Sanity beneath a zero HUD reading. Creatures shaken by Mind Blowing fear it for a shorter window.
+  [中文] 幻视丝带镶嵌暗影心房或附身心房：柔和光晕改为偏淡丁香色，按相对理智上限的“有效理智”缩放，地表白昼不亮、洞穴与地表夜间随档位亮起，理智归零时半径约可达 2.5；附身心房仍可每两份自动消耗的燃料掉落一枚邪恶花瓣；图鉴说明补充镶嵌夜视等描述。风干邪恶花瓣（4 噩梦燃料 + 1 茎草）补了配方品鉴句。远程端闪避不再闪受击；心灵风暴及强化采集等的范围检索与强化光环服务端更轻；噩梦护符、异化守护者帽子等理智覆盖统一走有效理智函数，HUD 归零时心灵风暴不会再暗扣理智。受心灵风暴恐惧的单位持续时间略缩短。
 
 Version 3.2.1 - Release Mind Blowing and Moon Port now use dedicated cast animations so online stays in sync and you recover from the cast lock sooner; Moon Port hides briefly before the blink, refuses bad landings, uses a short cooldown, clamps ground targeting range unless you are boosted, and usually needs Lunatic combo layers to cast. Enlightenment-affecting gear now lines up with Sanity tiers, Lunar Battle Uniform move and knockback, molting checks, and low-Sanity work hints; near full Enlightenment, overflow ability cost pays in Hunger instead of feeling free. Boosted monster-meat fallout waits a beat so finishing a bite stays smooth.
   [中文] 释放心灵风暴与月之相位使用独立施法，联机更同步、更快恢复可操作；月之相位短暂隐匿后传送，不可走点无效，带短冷却，未强化时限距、强化后更远，通常需先有连击层数才可用。启蒙类道具与理智档位、月夜制服移速及抗击退、换毛判定、低理智劳作提示一致；接近满启蒙时溢出消耗转自饥饿。强化怪物肉触发略延后，避免与进食动作冲突。
@@ -113,6 +113,6 @@ Version 1.3.5 - Minor tweaks and fixes.
 Version 1.3.6 - Updated for newer versions of the game.
 Version 1.3.8 - Minor tweaks for better compatibility with the "A New Reign" update.
 
-Current Mod Version: [3.2.1]
+Current Mod Version: [3.2.2]
 DST Character Mod created by: Senshimi [https://steamcommunity.com/id/Senshimi/]
 Touhou Project Collection: [http://steamcommunity.com/sharedfiles/filedetails/?id=701414094]

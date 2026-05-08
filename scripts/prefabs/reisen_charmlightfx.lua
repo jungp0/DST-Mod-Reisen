@@ -4,14 +4,14 @@ reisen_charmlightfx — soft purple aura while a Shadow Atrium is socketed
 
 A minimal light-only entity, parented to the wearer of reisen_charm while a
 shadowheart or shadowheart_infused sits in slot 3 of the charm's container.
-Radius / intensity / falloff are driven by the wearer's sanity tier:
+Radius / intensity / falloff follow reisen_charm.lua (GetEffectiveSanity / sanity.max):
 
-  san == 0           : largest (radius 2.5)
-  0  < san <= 25     : medium  (radius 1.7)
-  25 < san <= 50     : smallest (radius 1.0)
-  san > 50           : light disabled (entity remains; cheaper than respawning)
 
-Light values mirror the soft purple of reisen_ointmentfx.  The entity has no
+Light colour is a muted cool lilac (all channels present, low chroma): comfortable
+on any wearer alone, and blends toward soft periwinkle when stacked with
+reisen_ointmentfx’s stronger violet point light.
+
+The entity has no
 animation and no Network channel beyond the mandatory Transform/Network pair.
 
 reisen_charm.lua creates this on equip / shadowheart insertion and removes it
@@ -19,8 +19,7 @@ on unequip / shadowheart removal / charm depletion.
 ==============================================================================
 --]]
 
-local CHARM_LIGHT_COLOUR = { 0.25, 0.0, 0.8 }
-
+local CHARM_LIGHT_COLOUR = { 150 / 255, 146 / 255, 182 / 255 }
 -- Cached on inst: integer index of the last applied stage (0 = off, 1/2/3 = stages).
 -- Short-circuits redundant SetRadius/SetIntensity/SetFalloff/Enable calls when
 -- sanitydelta fires within the same stage band (mirrors lunatic()'s tier cache).

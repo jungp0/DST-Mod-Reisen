@@ -137,29 +137,40 @@ local CHARM_REFUEL_THRESHOLD_NIGHTMARE = 0.75
 -- Consume a horror fuel piece when currentfuel/maxfuel falls below this ratio.
 local CHARM_REFUEL_THRESHOLD_HORROR   = 0.50
 
--- Soft purple aura emitted while a Shadow Atrium (shadowheart / shadowheart_infused)
--- is socketed in slot 3.  Stage thresholds match the Reisen sanity tiers.
+-- Effective sanity = HUD-perceived value; canonical impl in scripts/reisen_util.lua.
+local charm_effective_sanity = ReisenUtil.GetEffectiveSanity
+
+-- Soft aura while a Shadow Atrium (shadowheart / shadowheart_infused) is socketed in slot 3.
+-- Bands use effective / sanity.max (HUD percent basis); breakpoints match legacy abs 25 / 50
+-- at typical max ~200, so WX / Wicker etc. scale correctly.
 local CHARM_LIGHT_STAGES = {
-	-- san <= 0
-	{ radius = 2.5, intensity = 0.50, falloff = 0.60 },
-	-- 0 < san <= 25
-	{ radius = 1.7, intensity = 0.40, falloff = 0.70 },
-	-- 25 < san <= 50
+	-- eff <= 0
+	{ radius = 2.5, intensity = 0.20, falloff = 0.70 },
+	-- 0 < pct <= MEDIUM (formerly abs <= 25 at ~200 max)
+	{ radius = 1.5, intensity = 0.25, falloff = 0.75 },
+	-- MEDIUM < pct <= HIGH (formerly (25, 50])
 	{ radius = 1.0, intensity = 0.30, falloff = 0.85 },
 }
+local CHARM_LIGHT_PCT_MEDIUM = 25 / 100
+local CHARM_LIGHT_PCT_HIGH   = 50 / 100
 
 -- Returns (stage, idx).  idx 0 = off; 1/2/3 are the three lit stages.
 -- The fx caches idx and short-circuits Light setter calls when unchanged
 -- (sanitydelta can fire ~10 Hz when sanity is dropping).
-local function charm_light_stage_for_sanity(san)
-	if san <= 0  then return CHARM_LIGHT_STAGES[1], 1 end
-	if san <= 25 then return CHARM_LIGHT_STAGES[2], 2 end
-	if san <= 50 then return CHARM_LIGHT_STAGES[3], 3 end
+local function charm_light_stage_for_owner(owner)
+	local s = owner.components.sanity
+	if s == nil then return nil, 0 end
+	local eff = charm_effective_sanity(owner)
+	local maxsan = s.max or 0
+	if maxsan <= 0 then
+		return nil, 0
+	end
+	local pct = eff / maxsan
+	if eff <= 0 then return CHARM_LIGHT_STAGES[1], 1 end
+	if pct <= CHARM_LIGHT_PCT_MEDIUM then return CHARM_LIGHT_STAGES[2], 2 end
+	if pct <= CHARM_LIGHT_PCT_HIGH then return CHARM_LIGHT_STAGES[3], 3 end
 	return nil, 0
 end
-
--- Effective sanity = HUD-perceived value; canonical impl in scripts/reisen_util.lua.
-local charm_effective_sanity = ReisenUtil.GetEffectiveSanity
 
 -- Every two auto-consumed fuel pieces while shadowheart_infused is socketed
 -- mints one petals_evil into the wearer's inventory.
@@ -352,7 +363,11 @@ local function charm_apply_light_stage(inst)
 		fx:set_stage(nil, 0)
 		return
 	end
-	local stage, idx = charm_light_stage_for_sanity(charm_effective_sanity(owner))
+	local stage, idx = charm_light_stage_for_owner(owner)
+	-- Mirror lunatic() condition: only illuminate at night or in caves.
+	if stage ~= nil and not (TheWorld:HasTag("cave") or TheWorld.state.phase == "night") then
+		stage, idx = nil, 0
+	end
 	fx:set_stage(stage, idx)
 end
 
@@ -362,6 +377,13 @@ local function charm_remove_light_fx(inst)
 	if inst._charm_sanity_fn ~= nil and inst._charm_owner ~= nil then
 		inst:RemoveEventCallback("sanitydelta", inst._charm_sanity_fn, inst._charm_owner)
 		inst._charm_sanity_fn = nil
+	end
+	if inst._charm_phase_fn ~= nil then
+		inst:RemoveEventCallback("isnight",     inst._charm_phase_fn, TheWorld)
+		inst:RemoveEventCallback("iscaveday",   inst._charm_phase_fn, TheWorld)
+		inst:RemoveEventCallback("iscavedusk",  inst._charm_phase_fn, TheWorld)
+		inst:RemoveEventCallback("iscavenight", inst._charm_phase_fn, TheWorld)
+		inst._charm_phase_fn = nil
 	end
 	if inst._charm_light_fx ~= nil then
 		if inst._charm_light_fx:IsValid() then
@@ -385,6 +407,15 @@ local function charm_spawn_light_fx(inst, owner)
 			charm_apply_light_stage(inst)
 		end
 		inst:ListenForEvent("sanitydelta", inst._charm_sanity_fn, owner)
+	end
+	if inst._charm_phase_fn == nil then
+		inst._charm_phase_fn = function()
+			charm_apply_light_stage(inst)
+		end
+		inst:ListenForEvent("isnight",     inst._charm_phase_fn, TheWorld)
+		inst:ListenForEvent("iscaveday",   inst._charm_phase_fn, TheWorld)
+		inst:ListenForEvent("iscavedusk",  inst._charm_phase_fn, TheWorld)
+		inst:ListenForEvent("iscavenight", inst._charm_phase_fn, TheWorld)
 	end
 	charm_apply_light_stage(inst)
 end

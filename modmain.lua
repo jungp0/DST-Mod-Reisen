@@ -799,7 +799,7 @@ STRINGS.SCRAPBOOK = STRINGS.SCRAPBOOK or {}
 STRINGS.SCRAPBOOK.SPECIALINFO = STRINGS.SCRAPBOOK.SPECIALINFO or {}
 STRINGS.SCRAPBOOK.SPECIALINFO.REISEN_CASUAL = "Sanity restore is conditional: only active when hunger is above 75%."
 STRINGS.SCRAPBOOK.SPECIALINFO.REISEN_UNIFORM = "Slightly increases movement speed; hunger depletes faster. While worn, reduces max sanity by 25%, worsening to 50% as durability drops. Successful attacks cost a small amount of sanity. At 0 sanity, movement speed increases further and you are immune to knockback. Worn with the Lunatic Vision Ribbon, negative events can trigger at night."
-STRINGS.SCRAPBOOK.SPECIALINFO.REISEN_CHARM = "Nightmare Fuel refuels 25%; Horror Fuel refuels for twice the amount. Applies a 50% sanity penalty but blocks all other negative sanity effects. Unequipping costs some durability. When hit, each strike has a chance to summon a Terrorbeak and consume fuel. Suppression ends when surrounded by multiple shadow creatures or when hunger is depleted. Has three built-in storage slots; automatically consumes stored fuel to restore durability. Placing a Shadow Atrium or Possessed Shadow Atrium inside removes negative effects to varying degrees. While socketed, the wearer emits a soft purple aura that grows with low Sanity (up to a 2.5 m radius at zero Sanity). With a Possessed Shadow Atrium socketed, every two auto-consumed fuel pieces also mint one Dark Petal into the wearer's inventory."
+STRINGS.SCRAPBOOK.SPECIALINFO.REISEN_CHARM = "Nightmare Fuel refuels 25%; Horror Fuel refuels for twice the amount. Applies a 50% sanity penalty but blocks all other negative sanity effects. Unequipping costs some durability. When hit, each strike has a chance to summon a Terrorbeak and consume fuel. Suppression ends when surrounded by multiple shadow creatures or when hunger is depleted. Has three built-in storage slots; automatically consumes stored fuel to restore durability. Placing a Shadow Atrium or Possessed Shadow Atrium inside removes negative effects to varying degrees and grants night vision. With a Possessed Shadow Atrium socketed, periodically grants Dark Petals."
 
 STRINGS.NAMES.REISEN_CASUAL = "Moon Rabbit Casual"
 STRINGS.RECIPE_DESC.REISEN_CASUAL = "Soft homewear with modest armor and warmth."
@@ -819,11 +819,14 @@ AddCharacterRecipe(
 	{"MAGIC"}
 )
 
+STRINGS.RECIPE_DESC.PETALS_EVIL_DRIED =
+	"A faint fragrance, yet unsettling."
+
 AddCharacterRecipe(
 	"petals_evil_dried",
 	{
-		Ingredient("cutgrass", 1),
 		Ingredient("nightmarefuel", 4),
+		Ingredient("cutgrass", 1),
 	},
 	TECH.NONE,
 	{
