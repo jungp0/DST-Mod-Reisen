@@ -808,7 +808,7 @@ STRINGS.CHARACTERS.GENERIC.DESCRIBE.REISEN_CASUAL = "It feels extra cozy when I 
 AddCharacterRecipe(
 	"petals_evil",
 	{
-		Ingredient("nightmarefuel", 2),
+		Ingredient("nightmarefuel", 3),
 		Ingredient("petals", 1),
 	},
 	TECH.NONE,
@@ -828,7 +828,7 @@ AddCharacterRecipe(
 		Ingredient("nightmarefuel", 4),
 		Ingredient("cutgrass", 1),
 	},
-	TECH.NONE,
+	TECH.MAGIC_THREE,
 	{
 		builder_tag = "reisen",
 		force_hint = true,
