@@ -5,6 +5,7 @@ PrefabFiles = {
 	"reisen_casual",
 	"reisen_uniform",
 	"reisen_charm",
+	"reisen_charmlightfx",
 	"reisen_ointment",
 	"reisen_ointmentfx",
 	"reisen_boostfx",
@@ -101,6 +102,7 @@ local FRAMES = GLOBAL.FRAMES
 local ReisenI18n = require "reisen_i18n"
 local ReisenConsts = require "reisen_consts"
 local ReisenPerf = require "reisen_perf"
+local ReisenUtil = require "reisen_util"
 
 -- Register the 3-slot fuel container for reisen_charm.
 --   Slot 1 : nightmarefuel only   (+25 % maxfuel, refuel at < 75 %)
@@ -797,7 +799,7 @@ STRINGS.SCRAPBOOK = STRINGS.SCRAPBOOK or {}
 STRINGS.SCRAPBOOK.SPECIALINFO = STRINGS.SCRAPBOOK.SPECIALINFO or {}
 STRINGS.SCRAPBOOK.SPECIALINFO.REISEN_CASUAL = "Sanity restore is conditional: only active when hunger is above 75%."
 STRINGS.SCRAPBOOK.SPECIALINFO.REISEN_UNIFORM = "Slightly increases movement speed; hunger depletes faster. While worn, reduces max sanity by 25%, worsening to 50% as durability drops. Successful attacks cost a small amount of sanity. At 0 sanity, movement speed increases further and you are immune to knockback. Worn with the Lunatic Vision Ribbon, negative events can trigger at night."
-STRINGS.SCRAPBOOK.SPECIALINFO.REISEN_CHARM = "Nightmare Fuel refuels 25%; Horror Fuel refuels for twice the amount. Applies a 50% sanity penalty but blocks all other negative sanity effects. Unequipping costs some durability. When hit, each strike has a chance to summon a Terrorbeak and consume fuel. Suppression ends when surrounded by multiple shadow creatures or when hunger is depleted. Has three built-in storage slots; automatically consumes stored fuel to restore durability. Placing a Shadow Atrium or Possessed Shadow Atrium inside removes negative effects to varying degrees."
+STRINGS.SCRAPBOOK.SPECIALINFO.REISEN_CHARM = "Nightmare Fuel refuels 25%; Horror Fuel refuels for twice the amount. Applies a 50% sanity penalty but blocks all other negative sanity effects. Unequipping costs some durability. When hit, each strike has a chance to summon a Terrorbeak and consume fuel. Suppression ends when surrounded by multiple shadow creatures or when hunger is depleted. Has three built-in storage slots; automatically consumes stored fuel to restore durability. Placing a Shadow Atrium or Possessed Shadow Atrium inside removes negative effects to varying degrees. While socketed, the wearer emits a soft purple aura that grows with low Sanity (up to a 2.5 m radius at zero Sanity). With a Possessed Shadow Atrium socketed, every two auto-consumed fuel pieces also mint one Dark Petal into the wearer's inventory."
 
 STRINGS.NAMES.REISEN_CASUAL = "Moon Rabbit Casual"
 STRINGS.RECIPE_DESC.REISEN_CASUAL = "Soft homewear with modest armor and warmth."
@@ -808,6 +810,20 @@ AddCharacterRecipe(
 	{
 		Ingredient("nightmarefuel", 3),
 		Ingredient("petals", 1),
+	},
+	TECH.NONE,
+	{
+		builder_tag = "reisen",
+		force_hint = true,
+	},
+	{"MAGIC"}
+)
+
+AddCharacterRecipe(
+	"petals_evil_dried",
+	{
+		Ingredient("cutgrass", 1),
+		Ingredient("nightmarefuel", 4),
 	},
 	TECH.NONE,
 	{
@@ -1140,7 +1156,8 @@ end)
 
 -- When Reisen starts a work action (chop / mine / hammer) at zero sanity,
 -- push an event so reisen.lua can fire the speech hint via its cooldown system.
--- Accounts for sanity overrides: inducedinsanity (nightmare amulet), SANITY_MODE_LUNACY (alterguardianhat).
+-- Effective sanity comes from the shared util so all sanity overrides
+-- (inducedinsanity, SANITY_MODE_LUNACY) are handled in one place.
 AddStategraphPostInit("wilson", function(sg)
     for _, state_name in ipairs({ "chop", "mine", "hammer" }) do
         local state = sg.states[state_name]
@@ -1148,22 +1165,20 @@ AddStategraphPostInit("wilson", function(sg)
             local orig_onenter = state.onenter
             state.onenter = function(inst)
                 if orig_onenter ~= nil then orig_onenter(inst) end
-                if inst:HasTag("reisen") and inst.components.sanity ~= nil then
-                    local san = inst.components.sanity.current
-                    if inst.components.sanity.inducedinsanity then
-                        san = 0
-                    elseif inst.components.sanity:IsLunacyMode() then
-                        san = inst.components.sanity:GetPercent() * inst.components.sanity.max
-                    end
-                    if san <= 0 then
-                        inst:PushEvent("reisen_zero_san_work")
-                    end
+                if inst:HasTag("reisen") and inst.components.sanity ~= nil
+                    and ReisenUtil.GetEffectiveSanity(inst) <= 0 then
+                    inst:PushEvent("reisen_zero_san_work")
                 end
             end
         end
 	end
 end)
 
+-- Stategraph hooks that change which state the player enters must be applied to
+-- BOTH "wilson" (server) and "wilson_client" (client prediction); otherwise the
+-- client predicts a state the server never enters. See the paired reisen_mindblowing
+-- (line ~1774) and reisen_moonport (line ~1850) states for the canonical pattern.
+--
 -- During dodge ("reisen_dodging" entity tag is active), suppress GoToState("hit") so
 -- the player is not frozen by hit-stun. The original global attacked handler is still
 -- called for all other branches (transform, sleeping, electrocute, knockback, etc.).
@@ -1177,6 +1192,20 @@ AddStategraphPostInit("wilson", function(sg)
             if inst.SoundEmitter ~= nil then
                 inst.SoundEmitter:PlaySound("dontstarve/wilson/hit")
             end
+            return
+        end
+        return orig.fn(inst, data)
+    end)
+end)
+
+-- Client mirror of the dodge suppression above. The server's SoundEmitter:PlaySound
+-- already broadcasts to clients, so we only need to suppress the client's hit-state
+-- prediction here -- replaying the sound would double it.
+AddStategraphPostInit("wilson_client", function(sg)
+    local orig = sg.events["attacked"]
+    if orig == nil then return end
+    sg.events["attacked"] = GLOBAL.EventHandler("attacked", function(inst, data)
+        if inst:HasTag("reisen_dodging") then
             return
         end
         return orig.fn(inst, data)
@@ -1261,11 +1290,14 @@ end
 
 -- True if release cost can be paid: sanity, or (fallback) hunger with current > 0.
 -- hunger_only: boosted Mind Blowing — must have hunger > 0 (no sanity).
+-- Uses effective sanity so that nightmare-amulet'd / lunacy-mode players see
+-- the same affordability the HUD implies.
 local function ReisenCanAffordReleaseCost(inst, sanity_cost, hunger_only)
     if hunger_only then
         return inst.components.hunger ~= nil and inst.components.hunger.current > 0
     end
-    if inst.components.sanity ~= nil and inst.components.sanity.current >= sanity_cost then
+    if inst.components.sanity ~= nil
+        and ReisenUtil.GetEffectiveSanity(inst) >= sanity_cost then
         return true
     end
     return inst.components.hunger ~= nil and inst.components.hunger.current > 0
@@ -1329,7 +1361,10 @@ local function ReisenPayCost(inst, sanity_cost)
     if not ReisenCanAffordReleaseCost(inst, sanity_cost, false) then
         return false
     end
-    if s ~= nil and s.current >= sanity_cost then
+    -- Mirror CanAfford: base the spend-vs-hunger decision on EFFECTIVE sanity
+    -- so an inducedinsanity'd player drains hunger instead of secretly bleeding
+    -- hidden sanity the HUD never shows.
+    if s ~= nil and ReisenUtil.GetEffectiveSanity(inst) >= sanity_cost then
         s:DoDelta(-sanity_cost)
     else
         if inst.components.hunger ~= nil then
@@ -1465,7 +1500,7 @@ local function ReisenDoMindBlowingAoE(doer, tx, tz, accum, is_boosted, friend_he
     --   - hostile players (PvP servers, combat:CanTarget == true) → damage + slow (no fear)
     --   - playerghost is still excluded (cant_tags) and is never targetable.
     local ents = GLOBAL.TheSim:FindEntities(tx, 0, tz, aoe_radius,
-        nil, {"INLIMBO", "FX", "NOCLICK", "playerghost"})
+        {"_combat"}, {"INLIMBO", "FX", "NOCLICK", "playerghost"})
     local any_killed = false
     for _, ent in ipairs(ents) do
         if ent ~= nil and ent:IsValid() and ent ~= doer then
@@ -1564,8 +1599,10 @@ local function ReisenDoSlowFieldAoE(doer, tx, tz)
     -- _reisen_no_stack_aoe prevents stack gain from the 0-damage hit in reisen_on_hit_other.
     doer._reisen_no_stack_aoe = true
     -- Same player-keep policy as MODE A: filter friendly/hostile per-entity inside the loop.
+    -- must_tags = {"_combat"}: pre-filters to entities with a combat component (players +
+    -- combat creatures). Walls/structures still get filtered out by is_structure check below.
     local ents = GLOBAL.TheSim:FindEntities(tx, 0, tz, aoe_radius,
-        nil, {"INLIMBO", "FX", "NOCLICK", "playerghost"})
+        {"_combat"}, {"INLIMBO", "FX", "NOCLICK", "playerghost"})
     for _, ent in ipairs(ents) do
         if ent ~= nil and ent:IsValid() and ent ~= doer then
             if ent:HasTag("player") then
@@ -2192,13 +2229,16 @@ AddStategraphActionHandler("wilson_client", GLOBAL.ActionHandler(GLOBAL.ACTIONS.
 
 -- match_fn(ent) → bool: whether the candidate entity counts as "same type"
 -- as the original action target.
-local function reisen_boosted_collect_nearby(doer, skip_ent, match_fn)
+-- must_tags (optional): engine-side pre-filter; cuts iteration cost on dense bases.
+local _BOOSTED_COLLECT_CANT = {"INLIMBO", "FX", "NOCLICK", "playerghost"}
+local function reisen_boosted_collect_nearby(doer, skip_ent, match_fn, must_tags)
     if doer == nil or doer._reisen_lunatic_boosted ~= true then return end
     if not (GLOBAL.TheWorld ~= nil and GLOBAL.TheWorld.ismastersim) then return end
     ReisenPerf.Bump("boosted_auto_collect.invoke")
     local _t_done = ReisenPerf.Begin("boosted_auto_collect")
     local x, y, z = doer.Transform:GetWorldPosition()
-    local ents = GLOBAL.TheSim:FindEntities(x, y, z, REISEN_BOOSTED_AUTO_COLLECT_RADIUS)
+    local ents = GLOBAL.TheSim:FindEntities(x, y, z, REISEN_BOOSTED_AUTO_COLLECT_RADIUS,
+        must_tags, _BOOSTED_COLLECT_CANT)
     ReisenPerf.Bump("boosted_auto_collect.ents.count", #ents)
     for _, ent in ipairs(ents) do
         if ent ~= doer and ent ~= skip_ent and ent:IsValid() and match_fn(ent) then
@@ -2218,6 +2258,14 @@ local function reisen_boosted_collect_nearby(doer, skip_ent, match_fn)
     _t_done()
 end
 
+-- Tag filters reuse the engine's spatial index pre-filter; safe because the pickable
+-- component adds "pickable", farmplant entities have "farmplant", and inventoryitem
+-- adds "_inventoryitem". HARVEST non-farmplant (drying racks, etc.) has no shared tag,
+-- so its scan stays unfiltered.
+local _BOOSTED_PICK_MUST    = {"pickable"}
+local _BOOSTED_FARM_MUST    = {"farmplant"}
+local _BOOSTED_PICKUP_MUST  = {"_inventoryitem"}
+
 -- Wrap PICK action at module load time (before ACTIONS are cached)
 local _orig_pick_fn = GLOBAL.ACTIONS.PICK.fn
 GLOBAL.ACTIONS.PICK.fn = function(act)
@@ -2226,7 +2274,7 @@ GLOBAL.ACTIONS.PICK.fn = function(act)
         local target_prefab = act.target ~= nil and act.target.prefab or nil
         reisen_boosted_collect_nearby(act.doer, act.target, function(ent)
             return ent.prefab == target_prefab
-        end)
+        end, _BOOSTED_PICK_MUST)
     end
     return result
 end
@@ -2243,7 +2291,7 @@ GLOBAL.ACTIONS.HARVEST.fn = function(act)
         if is_farmplant then
             reisen_boosted_collect_nearby(act.doer, target, function(ent)
                 return ent:HasTag("farmplant") or ent.components.crop ~= nil
-            end)
+            end, _BOOSTED_FARM_MUST)
         else
             local target_prefab = target ~= nil and target.prefab or nil
             reisen_boosted_collect_nearby(act.doer, target, function(ent)
@@ -2265,7 +2313,7 @@ GLOBAL.ACTIONS.PICKUP.fn = function(act)
                 and ent.components.inventoryitem ~= nil
                 and not ent.components.inventoryitem:IsHeld()
                 and ent.components.stackable ~= nil
-        end)
+        end, _BOOSTED_PICKUP_MUST)
     end
     return result
 end

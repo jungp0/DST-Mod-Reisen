@@ -15,6 +15,7 @@
 local MakePlayerCharacter = require "prefabs/player_common"
 local ReisenConsts = require "reisen_consts"
 local ReisenPerf = require "reisen_perf"
+local ReisenUtil = require "reisen_util"
 
 local assets = { Asset("SCRIPT", "scripts/prefabs/player_common.lua") }
 local prefabs = { "manrabbit_tail", "reisen_boostfx", "reisen_petalring", "ghostlyelixir_player_slowregen_fx" }
@@ -266,24 +267,10 @@ local REISEN_FULLMOON_LUCK_KEY   = "reisen_fullmoon_luck"
 
 local lunatic  -- forward declaration; defined below, referenced by onbecamehuman/onload
 
--- ── Effective Sanity Value ────────────────────────────────────────────────
---  Returns the effective sanity value, accounting for:
---    1. inducedinsanity (nightmare amulet, starvation) → 0
---    2. SANITY_MODE_LUNACY (alterguardianhat) → enlightenment value
---    3. Otherwise → normal sanity.current
---  Use this instead of directly reading sanity.current to ensure lunatic
---  tiers respond correctly to all sanity-overriding effects.
-local function get_effective_sanity(inst)
-	local sanity = inst.components.sanity
-	if sanity == nil then return 0 end
-	if sanity.inducedinsanity then
-		return 0
-	end
-	if sanity:IsLunacyMode() then
-		return sanity:GetPercent() * sanity.max
-	end
-	return sanity.current
-end
+-- Effective sanity = the value the wearer perceives on the HUD.
+-- Canonical implementation lives in scripts/reisen_util.lua; this is just
+-- a local alias so existing call sites stay unchanged.
+local get_effective_sanity = ReisenUtil.GetEffectiveSanity
 
 -- ── Carrot helpers ──────────────────────────────────────────────────────
 

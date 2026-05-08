@@ -209,15 +209,12 @@ local function fn()
         return math.min(1.0, t_eff / t_span + i._progress_bonus)
     end
 
-    -- Update progress net_byte and fire time-based milestone layers.
-    -- Does NOT add retrigger layers.
+    -- Fire time-based milestone layers from progress.
+    -- _crit_progress netvar is intentionally not :set() here -- clients do not
+    -- listen for crit_dirty (see comment in client section), so broadcasting it
+    -- every tick was pure idle bandwidth (~25-30 dirties per ramp). The netvar
+    -- declaration is kept for backward-compat of the entity's netvar layout.
     local function sync_progress(i, progress)
-        local pb = math.floor(progress * 255)
-        if pb ~= i._last_crit_progress then
-            i._last_crit_progress = pb
-            i._crit_progress:set(pb)
-        end
-
         -- Milestone 1: innermost ring appears when crit starts (progress > 0)
         if progress > 0 and i._milestone_layers < 1 then
             i._milestone_layers = 1
@@ -302,7 +299,6 @@ local function fn()
         i._progress_bonus     = 0
         i._milestone_layers   = 0
         i._crit_max_fired     = false
-        i._crit_progress:set(0)  -- crit_dirty → client resets colour/scale
         i._layer_count:set(0)    -- layer_dirty → client removes all rings
     end
 

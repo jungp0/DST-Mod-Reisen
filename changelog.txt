@@ -1,6 +1,9 @@
 Reisen Udongein Inaba | Touhou Project
 
-Changelog (Last Update: 08.05.2026 - Version 3.2.1)
+Changelog (Last Update: 09.05.2026 - Version 3.2.2)
+
+Version 3.2.2 - The Lunatic Vision Ribbon now reacts to a socketed Shadow Atrium or Possessed Shadow Atrium: a soft purple aura whose radius grows with low Sanity (up to 2.5 at zero Sanity); with a Possessed Shadow Atrium, every two auto-consumed fuel pieces also yield a Dark Petal into the wearer's inventory. Reisen can craft Dried Dark Petals from 1 Cut Grass and 4 Nightmare Fuel. Dodging no longer flickers a brief hit-stun on remote clients; AoE entity scans (Mind Blowing, boosted PICK / HARVEST / PICKUP) and the boost FX run on cheaper server paths. Sanity overrides (Nightmare Amulet, Alter Guardian Hat) are now read through one shared "effective Sanity" helper across the mod, so Mind Blowing cost no longer secretly bleeds Sanity while the HUD shows zero.
+  [中文] 幻视丝带新增镶嵌反应：装入暗影心房或附身暗影心房后，佩戴者周身散发柔和紫光，半径随低理智档位增大（理智为 0 时最大约 2.5）；附身暗影心房在位时，每自动消耗两份燃料额外向背包补给一枚邪恶花瓣。新增配方：邪恶花瓣（干） = 1 茎草 + 4 噩梦燃料。闪避时联机端不再短暂播放受击动作；范围伤害（心灵风暴、强化下采集）与强化光环改用更省的服务端处理。噩梦护符、异化守护者帽子等理智覆盖效果统一走"有效理智"函数，心灵风暴消耗不会再在 HUD 显示为 0 时偷偷扣理智。
 
 Version 3.2.1 - Release Mind Blowing and Moon Port now use dedicated cast animations so online stays in sync and you recover from the cast lock sooner; Moon Port hides briefly before the blink, refuses bad landings, uses a short cooldown, clamps ground targeting range unless you are boosted, and usually needs Lunatic combo layers to cast. Enlightenment-affecting gear now lines up with Sanity tiers, Lunar Battle Uniform move and knockback, molting checks, and low-Sanity work hints; near full Enlightenment, overflow ability cost pays in Hunger instead of feeling free. Boosted monster-meat fallout waits a beat so finishing a bite stays smooth.
   [中文] 释放心灵风暴与月之相位使用独立施法，联机更同步、更快恢复可操作；月之相位短暂隐匿后传送，不可走点无效，带短冷却，未强化时限距、强化后更远，通常需先有连击层数才可用。启蒙类道具与理智档位、月夜制服移速及抗击退、换毛判定、低理智劳作提示一致；接近满启蒙时溢出消耗转自饥饿。强化怪物肉触发略延后，避免与进食动作冲突。

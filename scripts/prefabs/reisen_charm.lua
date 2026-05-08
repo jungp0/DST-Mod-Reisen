@@ -80,6 +80,8 @@ TAGS ADDED TO ITEM
 ==============================================================================
 --]]
 
+local ReisenUtil = require "reisen_util"
+
 local CHARM_BANK = "reisenhat"
 local CHARM_BUILD = "reisen_hat"
 local CHARM_WORLD_SCALE = 1.25
@@ -134,6 +136,34 @@ local CHARM_FUEL_CHECK_PERIOD = 5
 local CHARM_REFUEL_THRESHOLD_NIGHTMARE = 0.75
 -- Consume a horror fuel piece when currentfuel/maxfuel falls below this ratio.
 local CHARM_REFUEL_THRESHOLD_HORROR   = 0.50
+
+-- Soft purple aura emitted while a Shadow Atrium (shadowheart / shadowheart_infused)
+-- is socketed in slot 3.  Stage thresholds match the Reisen sanity tiers.
+local CHARM_LIGHT_STAGES = {
+	-- san <= 0
+	{ radius = 2.5, intensity = 0.50, falloff = 0.60 },
+	-- 0 < san <= 25
+	{ radius = 1.7, intensity = 0.40, falloff = 0.70 },
+	-- 25 < san <= 50
+	{ radius = 1.0, intensity = 0.30, falloff = 0.85 },
+}
+
+-- Returns (stage, idx).  idx 0 = off; 1/2/3 are the three lit stages.
+-- The fx caches idx and short-circuits Light setter calls when unchanged
+-- (sanitydelta can fire ~10 Hz when sanity is dropping).
+local function charm_light_stage_for_sanity(san)
+	if san <= 0  then return CHARM_LIGHT_STAGES[1], 1 end
+	if san <= 25 then return CHARM_LIGHT_STAGES[2], 2 end
+	if san <= 50 then return CHARM_LIGHT_STAGES[3], 3 end
+	return nil, 0
+end
+
+-- Effective sanity = HUD-perceived value; canonical impl in scripts/reisen_util.lua.
+local charm_effective_sanity = ReisenUtil.GetEffectiveSanity
+
+-- Every two auto-consumed fuel pieces while shadowheart_infused is socketed
+-- mints one petals_evil into the wearer's inventory.
+local CHARM_INFUSED_PETALS_PER_FUELS = 2
 
 --------------------------------------------------------------------------
 -- Immunity toggle helpers
@@ -264,6 +294,9 @@ local function charm_find_fuel_slot(inst)
 	return nil, nil
 end
 
+-- Forward declaration so charm_consume_one_from_container can grant petals.
+local charm_grant_infused_petal
+
 -- Consume exactly one piece from the first occupied fuel slot in the container.
 -- Returns the fuel amount added (> 0), or 0 if the container is empty / invalid.
 local function charm_consume_one_from_container(inst)
@@ -279,7 +312,93 @@ local function charm_consume_one_from_container(inst)
 		inst.components.container:RemoveItemBySlot(slot)
 		item:Remove()
 	end
+	-- Possessed Shadow Atrium perk: every Nth consumption, mint a Dark Petal.
+	local sh = charm_get_shadowheart(inst)
+	if sh ~= nil and sh.prefab == "shadowheart_infused" then
+		local count = (inst._charm_infused_fuel_count or 0) + 1
+		if count >= CHARM_INFUSED_PETALS_PER_FUELS then
+			inst._charm_infused_fuel_count = 0
+			charm_grant_infused_petal(inst)
+		else
+			inst._charm_infused_fuel_count = count
+		end
+	end
 	return added
+end
+
+charm_grant_infused_petal = function(inst)
+	local owner = inst._charm_owner
+		or (inst.components.inventoryitem and inst.components.inventoryitem.owner)
+	if owner == nil or not owner:IsValid() then return end
+	local petal = SpawnPrefab("petals_evil")
+	if petal == nil then return end
+	local given = owner.components.inventory ~= nil
+		and owner.components.inventory:GiveItem(petal)
+	if not given and petal:IsValid() then
+		local x, y, z = owner.Transform:GetWorldPosition()
+		petal.Transform:SetPosition(x, y, z)
+	end
+end
+
+--------------------------------------------------------------------------
+-- Shadow Atrium aura: soft purple light, sanity-tier-driven radius.
+--------------------------------------------------------------------------
+
+local function charm_apply_light_stage(inst)
+	local fx = inst._charm_light_fx
+	if fx == nil or not fx:IsValid() or fx.set_stage == nil then return end
+	local owner = inst._charm_owner
+	if owner == nil or not owner:IsValid() or owner.components.sanity == nil then
+		fx:set_stage(nil, 0)
+		return
+	end
+	local stage, idx = charm_light_stage_for_sanity(charm_effective_sanity(owner))
+	fx:set_stage(stage, idx)
+end
+
+local function charm_remove_light_fx(inst)
+	-- Listener lifetime is co-extensive with the fx so wearers without a
+	-- Shadow Atrium socketed pay zero per-sanity-tick cost.
+	if inst._charm_sanity_fn ~= nil and inst._charm_owner ~= nil then
+		inst:RemoveEventCallback("sanitydelta", inst._charm_sanity_fn, inst._charm_owner)
+		inst._charm_sanity_fn = nil
+	end
+	if inst._charm_light_fx ~= nil then
+		if inst._charm_light_fx:IsValid() then
+			inst._charm_light_fx:Remove()
+		end
+		inst._charm_light_fx = nil
+	end
+end
+
+local function charm_spawn_light_fx(inst, owner)
+	if inst._charm_light_fx ~= nil and inst._charm_light_fx:IsValid() then return end
+	if owner == nil or not owner:IsValid() then return end
+	if charm_get_shadowheart(inst) == nil then return end
+	local fx = SpawnPrefab("reisen_charmlightfx")
+	if fx == nil then return end
+	fx.entity:SetParent(owner.entity)
+	fx.Transform:SetPosition(0, 0.2, 0)
+	inst._charm_light_fx = fx
+	if inst._charm_sanity_fn == nil then
+		inst._charm_sanity_fn = function(o)
+			charm_apply_light_stage(inst)
+		end
+		inst:ListenForEvent("sanitydelta", inst._charm_sanity_fn, owner)
+	end
+	charm_apply_light_stage(inst)
+end
+
+-- Reconcile light fx with current state: spawn if shadowheart present and
+-- equipped, remove otherwise. Safe to call from itemget/itemlose/equip/unequip.
+local function charm_sync_light(inst)
+	local owner = inst._charm_owner
+	if owner == nil or not owner:IsValid() or charm_get_shadowheart(inst) == nil then
+		charm_remove_light_fx(inst)
+	else
+		charm_spawn_light_fx(inst, owner)
+		charm_apply_light_stage(inst)
+	end
 end
 
 --------------------------------------------------------------------------
@@ -461,11 +580,16 @@ local function apply_charm_sanity(inst, owner)
 
 	inst._charm_owner = owner
 	charm_sync_immunity(inst, owner)
+	-- charm_sync_light registers the sanitydelta listener only when a Shadow
+	-- Atrium is actually socketed, so unsocketed wearers pay zero per-tick cost.
+	charm_sync_light(inst)
 end
 
 local function clear_charm_sanity(inst, owner)
 	if not (owner ~= nil and owner._reisen_charm_worn) then return end
 
+	-- Removes both the light fx and its sanitydelta listener (co-extensive lifetimes).
+	charm_remove_light_fx(inst)
 	inst._charm_owner = nil
 
 	if inst._charm_attacked_fn ~= nil then
@@ -642,6 +766,15 @@ local function fn()
 		elseif data.item.prefab == "shadowheart" then
 			charm_say(i, "ANNOUNCE_REISEN_CHARM_SHADOWHEART")
 		end
+		-- Reset the petal-from-fuel counter on every slot-3 insertion so the
+		-- perk always starts fresh (also covers swapping shadowheart variants).
+		i._charm_infused_fuel_count = 0
+		charm_sync_light(i)
+	end)
+	inst:ListenForEvent("itemlose", function(i, data)
+		if data == nil or data.slot ~= 3 then return end
+		i._charm_infused_fuel_count = 0
+		charm_sync_light(i)
 	end)
 
 	inst:AddComponent("shadowlevel")

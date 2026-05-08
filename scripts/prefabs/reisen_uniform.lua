@@ -54,6 +54,8 @@ TAGS ADDED TO ITEM
 
 local REISEN_UNIFORM_BUILD = "reisen_uniform"
 
+local ReisenUtil = require "reisen_util"
+
 local assets =
 {
 	Asset("ANIM", "anim/reisen_uniform.zip"),
@@ -77,20 +79,8 @@ local UNIFORM_ATTACK_SANITY_DELTA         = -2.5
 local UNIFORM_ATTACK_SANITY_DELTA_CHARM   = -5
 local REISEN_CHARM_PREFAB                 = "reisen_charm"
 
--- Returns the effective sanity value, accounting for sanity overrides:
---   inducedinsanity (nightmare amulet, starvation) → 0
---   SANITY_MODE_LUNACY (alterguardianhat) → enlightenment value
-local function get_effective_sanity(owner)
-	local sanity = owner ~= nil and owner.components.sanity or nil
-	if sanity == nil then return 0 end
-	if sanity.inducedinsanity then
-		return 0
-	end
-	if sanity:IsLunacyMode() then
-		return sanity:GetPercent() * sanity.max
-	end
-	return sanity.current
-end
+-- Effective sanity = HUD-perceived value; canonical impl in scripts/reisen_util.lua.
+local get_effective_sanity = ReisenUtil.GetEffectiveSanity
 
 local function uniform_attack_sanity_delta(owner)
 	local inv = owner ~= nil and owner.components.inventory or nil
