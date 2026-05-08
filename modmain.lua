@@ -808,7 +808,7 @@ STRINGS.CHARACTERS.GENERIC.DESCRIBE.REISEN_CASUAL = "It feels extra cozy when I 
 AddCharacterRecipe(
 	"petals_evil",
 	{
-		Ingredient("nightmarefuel", 3),
+		Ingredient("nightmarefuel", 2),
 		Ingredient("petals", 1),
 	},
 	TECH.NONE,
@@ -1316,7 +1316,7 @@ end
 --
 -- Normal, Enlightenment (SANITY_MODE_LUNACY):
 --   Recover sanity: gain = sanity_cost × (1 − vuln).
---   Exception: if sanity lacks headroom to absorb the full recovery (current + cost > cap),
+--   Exception: if effective sanity lacks headroom (GetEffectiveSanity + cost > cap),
 --   drain hunger instead.  Avoids floating-point near-cap freecast and partial-waste cases.
 --
 -- Normal, not Enlightenment:
@@ -1345,12 +1345,15 @@ local function ReisenPayCost(inst, sanity_cost)
 
     if s ~= nil and s.IsLunacyMode ~= nil and s:IsLunacyMode() then
         -- Cost hunger when there is not enough headroom to absorb the full sanity recovery.
-        -- Using (current + cost > cap) rather than (current >= cap) avoids floating-point
-        -- edge cases (e.g. current = 199.9999 vs cap = 200) where DoDelta would be nearly
-        -- a no-op but the skill would still appear free.
+        -- Use effective sanity for the headroom test (same meter as Lunacy HUD) so Moon Port /
+        -- release in Enlightenment aligns with inducedinsanity and percent-based enlightenment.
+        -- Using (effective + cost > cap) rather than (effective >= cap) avoids floating-point
+        -- edge cases (e.g. near cap) where DoDelta would be nearly a no-op but the skill
+        -- would still appear free.
         local cap = s:GetMaxWithPenalty()
         local effective_cost = sanity_cost * (1 - vuln)
-        if s.current + effective_cost > cap then
+        local eff_now = ReisenUtil.GetEffectiveSanity(inst)
+        if eff_now + effective_cost > cap then
             if inst.components.hunger == nil or inst.components.hunger.current <= 0 then
                 return false
             end
