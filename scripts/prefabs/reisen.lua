@@ -14,6 +14,7 @@
 
 local MakePlayerCharacter = require "prefabs/player_common"
 local ReisenConsts = require "reisen_consts"
+local ReisenFX = require "reisen_fx"
 local ReisenPerf = require "reisen_perf"
 local ReisenUtil = require "reisen_util"
 
@@ -64,12 +65,12 @@ local REISEN_LUNATIC_DECAY_BOOST_MAX = 2.5    -- boosted, zone max
 --  Effects are cumulative as stack grows.
 
 --  stack > 0 (non-boost) ── passive move speed bonus (flat, any stack level).
-local REISEN_LUNATIC_MOVE_SPEED_MULT = 1.30
+local REISEN_LUNATIC_MOVE_SPEED_MULT = 1.25
 
 --  Boost mode: second locomotor key; multiplies with REISEN_LUNATIC_MOVE_SPEED_MULT when stack>0.
-local REISEN_BOOST_MOVE_MULT_START = 1.05
+local REISEN_BOOST_MOVE_MULT_START = 1.10
 local REISEN_BOOST_MOVE_MULT_MIN = 1.00
-local REISEN_BOOST_MOVE_MULT_MAX = 1.05
+local REISEN_BOOST_MOVE_MULT_MAX = 1.10
 local REISEN_BOOST_MOVE_MULT_STEP = 0.01
 
 --  stack > REISEN_LUNATIC_STACK_LOW_THRESH ── burst speed when hit (dodge reaction)
@@ -93,7 +94,7 @@ local REISEN_LUNATIC_VULN_RELIEF_CAP_BOOSTED = 0.5    -- boosted mode absorb rel
 --    • hunger drain scaled up
 local REISEN_LUNATIC_STACK_HI_THRESH  = ReisenConsts.LUNATIC_STACK_HI
 local REISEN_LUNATIC_DAMAGE_MULT_HI   = 1.5
-local REISEN_LUNATIC_HUNGER_MULT_HI   = 1.2
+local REISEN_LUNATIC_HUNGER_MULT_HI   = 1.5
 
 --  stack ≥ 1, on kill ── HP accumulation (active):
 --    Each kill adds  min(stack+1, MAX) × REISEN_KILL_HP_PER_KILL  to a pending heal pool.
@@ -155,13 +156,14 @@ local REISEN_EVIL_PETALS_FOODS = {
 --      Timer resets whenever the stack leaves max zone (or boosted ends).
 --      Crit doubles post-armor damage (bonusdamagefn).
 local REISEN_BOOSTED_HUNGER_MULT      = ReisenConsts.BOOSTED_HUNGER_MULT
-local REISEN_BOOSTED_HEAL_BONUS       = 0.5    -- extra fraction added per heal event
+local REISEN_BOOSTED_HEAL_BONUS       = ReisenConsts.BOOSTED_HEAL_BONUS    -- extra fraction added per heal event
 local REISEN_BOOSTED_CRIT_MAX_CHANCE  = 0.25   -- crit probability ceiling (at t = MAX_TIME)
 local REISEN_BOOSTED_CRIT_MAX_TIME    = 30.0   -- seconds to reach max chance
 local REISEN_BOOSTED_CRIT_RAMP_DELAY  = 5.0    -- flat-zero window before ramp starts
 local REISEN_BOOSTED_CRIT_RAMP_POWER  = 1.5    -- ease-in exponent (>1 = slow start, fast end)
--- Same as pigman werebeast SetTriggerLimit(4) + OnEat (MEAT, GetHealth < 0).
+-- Negative-health meat is remembered for half a day since the latest bite.
 local REISEN_BOOSTED_MONSTER_MEAT_TRIGGER_LIMIT = 4
+local REISEN_BOOSTED_MONSTER_MEAT_MEMORY_TIME = TUNING.TOTAL_DAY_TIME / 2
 -- Forced sleep duration (seconds) when the 4th negative-health MEAT triggers boosted.
 local REISEN_MEAT_SLEEP_DURATION = 3.0
 
@@ -260,12 +262,15 @@ local REISEN_VULN_ABSORB_SOURCE  = "reisen_vuln"
 local REISEN_LUNATIC_VULN_SOURCE = "reisen_lunatic_vuln"
 local REISEN_LUNATIC_WEAPON_DUR_SOURCE = "reisen_lunatic_weapon_dur"
 local REISEN_FULLMOON_LUCK_KEY   = "reisen_fullmoon_luck"
+local REISEN_FULLMOON_LUNACY_KEY = "reisen_fullmoon"
 
 -- ════════════════════════════════════════════════════════════════════════
 --  END CONFIGURATION
 -- ════════════════════════════════════════════════════════════════════════
 
 local lunatic  -- forward declaration; defined below, referenced by onbecamehuman/onload
+local reisen_on_booster_applied
+local reisen_on_meat_trigger_memory
 
 -- Effective sanity = the value the wearer perceives on the HUD.
 -- Canonical implementation lives in scripts/reisen_util.lua; this is just
@@ -524,14 +529,108 @@ end
 
 -- ── Ghost / human transitions ───────────────────────────────────────────
 
+local function reisen_cancel_meat_boost_queue(inst)
+	inst._reisen_meat_boost_pending_knockdown = nil
+	if inst._reisen_meat_boost_task ~= nil then
+		inst._reisen_meat_boost_task:Cancel()
+		inst._reisen_meat_boost_task = nil
+	end
+end
+
+local function reisen_cancel_meat_trigger_memory(inst)
+	if inst._reisen_meat_trigger_forget_task ~= nil then
+		inst._reisen_meat_trigger_forget_task:Cancel()
+		inst._reisen_meat_trigger_forget_task = nil
+	end
+end
+
+local function reisen_reset_meat_trigger_count(inst)
+	inst._reisen_boosted_meat_trigger_count = 0
+	reisen_cancel_meat_trigger_memory(inst)
+end
+
+local function reisen_clear_boost_runtime(inst)
+	inst._reisen_lunatic_boosted = false
+	reisen_reset_meat_trigger_count(inst)
+	inst._reisen_petal_buff = false
+	inst._reisen_boost_move_mult = nil
+	inst._reisen_crit_enter_time = nil
+	reisen_cancel_meat_boost_queue(inst)
+
+	if inst._reisen_petal_fx ~= nil then
+		if inst._reisen_petal_fx:IsValid() and inst._reisen_petal_fx.kill_fx ~= nil then
+			inst._reisen_petal_fx:kill_fx()
+		end
+		inst._reisen_petal_fx = nil
+	end
+
+	if inst._reisen_boost_aura_fx ~= nil then
+		if inst._reisen_boost_aura_fx:IsValid() and inst._reisen_boost_aura_fx.kill_fx ~= nil then
+			inst._reisen_boost_aura_fx:kill_fx()
+		end
+		inst._reisen_boost_aura_fx = nil
+	end
+
+	if inst.components.locomotor ~= nil then
+		inst.components.locomotor:RemoveExternalSpeedMultiplier(inst, REISEN_BOOST_SPEED_KEY)
+	end
+	if inst._reisen_lunatic_boosted_net ~= nil then
+		inst._reisen_lunatic_boosted_net:set(false)
+		inst._reisen_lunatic_boosted_net_last_value = false
+	end
+end
+
+local function reisen_apply_equipped_runtime_state(inst, fn_name)
+	local inv = inst.components.inventory
+	if inv == nil then return end
+	local slots = { EQUIPSLOTS.HEAD, EQUIPSLOTS.BODY }
+	for _, slot in ipairs(slots) do
+		local item = inv:GetEquippedItem(slot)
+		if item ~= nil and item[fn_name] ~= nil then
+			item[fn_name](item, inst)
+		end
+	end
+end
+
+local function reisen_set_fullmoon_runtime(inst, enable, apply_boost)
+	if enable
+		and (inst:HasTag("playerghost")
+			or (inst.components.health ~= nil and inst.components.health:IsDead())) then
+		return
+	end
+	local s = inst.components.sanity
+	if s ~= nil and s.EnableLunacy ~= nil then
+		s:EnableLunacy(enable, REISEN_FULLMOON_LUNACY_KEY)
+	end
+	if inst.components.luckuser ~= nil then
+		if enable then
+			inst.components.luckuser:SetLuckSource(REISEN_FULLMOON_LUCK, REISEN_FULLMOON_LUCK_KEY)
+		else
+			inst.components.luckuser:RemoveLuckSource(REISEN_FULLMOON_LUCK_KEY)
+		end
+	end
+	if enable and apply_boost and reisen_on_booster_applied ~= nil then
+		reisen_on_booster_applied(inst)
+	end
+end
+
 local function onbecamehuman(inst)
 	inst.components.locomotor:SetExternalSpeedMultiplier(inst, "reisen_speed_mod", 1)
 	inst.components.locomotor:RemoveExternalSpeedMultiplier(inst, "reisen_ghost_speed")
+	reisen_apply_equipped_runtime_state(inst, "reisen_apply_charm_state")
+	reisen_apply_equipped_runtime_state(inst, "reisen_apply_uniform_state")
+	reisen_apply_equipped_runtime_state(inst, "reisen_apply_casual_state")
+	if TheWorld ~= nil and TheWorld.state.isfullmoon then
+		reisen_set_fullmoon_runtime(inst, true, true)
+	end
 	reisen_sync_starving_insanity(inst)
 	lunatic(inst)
 end
 
 local function onbecameghost(inst)
+	reisen_apply_equipped_runtime_state(inst, "reisen_clear_charm_state")
+	reisen_apply_equipped_runtime_state(inst, "reisen_clear_uniform_state")
+	reisen_apply_equipped_runtime_state(inst, "reisen_clear_casual_state")
 	inst.components.locomotor:RemoveExternalSpeedMultiplier(inst, "reisen_speed_mod")
 	inst.components.locomotor:SetExternalSpeedMultiplier(inst, "reisen_ghost_speed", 1.5)
 	if inst._reisen_dodge_task ~= nil then
@@ -545,14 +644,14 @@ local function onbecameghost(inst)
 		inst._reisen_lunatic_decay_task = nil
 	end
 	inst._reisen_lunatic_stack = 0
-	inst._reisen_lunatic_boosted = false
-	inst._reisen_boosted_meat_trigger_count = 0
-	inst._reisen_boost_move_mult = nil
+	reisen_clear_boost_runtime(inst)
 	if inst._reisen_lunatic_net ~= nil then
 		inst._reisen_lunatic_net:set(0)
+		inst._reisen_lunatic_net_last_value = 0
 	end
 	inst.components.locomotor:RemoveExternalSpeedMultiplier(inst, REISEN_LUNATIC_SPEED_KEY)
 	inst.components.locomotor:RemoveExternalSpeedMultiplier(inst, REISEN_BOOST_SPEED_KEY)
+	reisen_set_fullmoon_runtime(inst, false, false)
 	if inst.components.health ~= nil and inst.components.health.externalabsorbmodifiers ~= nil then
 		local ext = inst.components.health.externalabsorbmodifiers
 		ext:RemoveModifier(REISEN_VULN_ABSORB_SOURCE, "main")
@@ -573,6 +672,7 @@ local function onbecameghost(inst)
 	inst._reisen_cached_zero_san   = nil
 	inst._reisen_cached_weapon_dur = nil
 	inst._reisen_cached_high_san   = nil
+	lunatic(inst)
 	if inst.Light ~= nil then
 		inst.Light:Enable(false)
 	end
@@ -581,12 +681,26 @@ end
 local function onsave(inst, data)
 	data.molt_qualified_days = inst._reisen_molt_qualified_days or 0
 	data.molt_last_cycle     = inst._reisen_molt_last_cycle
+	if (inst._reisen_boosted_meat_trigger_count or 0) > 0
+		and inst._reisen_meat_trigger_forget_task ~= nil then
+		data.meat_trigger_count = inst._reisen_boosted_meat_trigger_count
+		data.meat_trigger_time = GetTaskRemaining(inst._reisen_meat_trigger_forget_task)
+	end
 end
 
 local function onload(inst, data)
 	if data ~= nil then
 		inst._reisen_molt_qualified_days = data.molt_qualified_days or 0
 		inst._reisen_molt_last_cycle     = data.molt_last_cycle
+		if data.meat_trigger_count ~= nil then
+			inst._reisen_boosted_meat_trigger_count = math.max(0, data.meat_trigger_count)
+			reisen_cancel_meat_trigger_memory(inst)
+			if inst._reisen_boosted_meat_trigger_count > 0 then
+				inst._reisen_meat_trigger_forget_task = inst:DoTaskInTime(
+					math.max(0, data.meat_trigger_time or REISEN_BOOSTED_MONSTER_MEAT_MEMORY_TIME),
+					reisen_on_meat_trigger_memory)
+			end
+		end
 	end
 
 	inst:ListenForEvent("ms_respawnedfromghost", onbecamehuman)
@@ -931,23 +1045,7 @@ end
 -- carrot eat, etc.).  Clears boost flags and settles accumulated HP if the
 -- player was boosted.
 local function reisen_exit_boost_state(inst, was_boosted)
-	inst._reisen_lunatic_boosted = false
-	inst._reisen_boosted_meat_trigger_count = 0
-	inst._reisen_petal_buff = false
-	if inst._reisen_petal_fx ~= nil then
-		if inst._reisen_petal_fx:IsValid() and inst._reisen_petal_fx.kill_fx ~= nil then
-			inst._reisen_petal_fx:kill_fx()
-		end
-		inst._reisen_petal_fx = nil
-	end
-	inst._reisen_boost_move_mult = nil
-	-- boostfx handles crit visual; kill_fx removes the whole effect
-	if inst._reisen_boost_aura_fx ~= nil then
-		if inst._reisen_boost_aura_fx:IsValid() and inst._reisen_boost_aura_fx.kill_fx ~= nil then
-			inst._reisen_boost_aura_fx:kill_fx()
-		end
-		inst._reisen_boost_aura_fx = nil
-	end
+	reisen_clear_boost_runtime(inst)
 	if was_boosted then
 		reisen_apply_kill_hp_accum(inst)
 	end
@@ -1337,6 +1435,8 @@ end
 -- "cometo" is pushed after REISEN_MEAT_SLEEP_DURATION to wake her back up.
 -- No grogginess component is required; the 30s SGwilson ontimeout is harmless
 -- because our cometo fires first.
+local REISEN_MEAT_BOOST_DELAY = 2 * FRAMES
+
 local function reisen_apply_meat_knockdown(inst)
 	if inst:HasTag("playerghost") then return end
 	if inst.components.health ~= nil and inst.components.health:IsDead() then return end
@@ -1349,6 +1449,24 @@ local function reisen_apply_meat_knockdown(inst)
 end
 
 -- ── Booster application ──────────────────────────────────────────────────
+
+local function reisen_queue_meat_boost(inst, knockdown)
+	reisen_cancel_meat_boost_queue(inst)
+	inst._reisen_meat_boost_pending_knockdown = inst._reisen_meat_boost_pending_knockdown or knockdown
+	inst._reisen_meat_boost_task = inst:DoTaskInTime(REISEN_MEAT_BOOST_DELAY, function(i)
+		if i == nil or not i:IsValid() then return end
+		i._reisen_meat_boost_task = nil
+		local should_knockdown = i._reisen_meat_boost_pending_knockdown
+		i._reisen_meat_boost_pending_knockdown = nil
+		if i:HasTag("playerghost") then return end
+		if i.components == nil then return end
+		if i.components.health ~= nil and i.components.health:IsDead() then return end
+		if should_knockdown then
+			reisen_apply_meat_knockdown(i)
+		end
+		reisen_on_booster_applied(i)
+	end)
+end
 
 local function reisen_spawn_boost_fx(inst)
 	-- If already have valid boost aura: retrigger handles animation + layer + progress
@@ -1375,9 +1493,11 @@ local function reisen_spawn_boost_fx(inst)
 	end
 end
 
-local function reisen_on_booster_applied(inst)
+reisen_on_booster_applied = function(inst)
 	if not (TheWorld ~= nil and TheWorld.ismastersim) then return end
-	inst._reisen_boosted_meat_trigger_count = 0
+	if inst:HasTag("playerghost") then return end
+	if inst.components.health ~= nil and inst.components.health:IsDead() then return end
+	reisen_reset_meat_trigger_count(inst)
 	inst._reisen_lunatic_stack = REISEN_LUNATIC_MAX
 	inst._reisen_lunatic_boosted = true
 	inst._reisen_boost_move_mult = REISEN_BOOST_MOVE_MULT_START
@@ -1409,6 +1529,20 @@ local function is_heavy_monster_food(food)
 		and ed.sanityvalue <= REISEN_BOOSTER_FOOD_SANITY_THRESH
 end
 
+reisen_on_meat_trigger_memory = function(inst)
+	inst._reisen_boosted_meat_trigger_count = 0
+	inst._reisen_meat_trigger_forget_task = nil
+end
+
+local function reisen_add_meat_trigger(inst)
+	local old = inst._reisen_boosted_meat_trigger_count or 0
+	inst._reisen_boosted_meat_trigger_count = old + 1
+	reisen_cancel_meat_trigger_memory(inst)
+	inst._reisen_meat_trigger_forget_task = inst:DoTaskInTime(
+		REISEN_BOOSTED_MONSTER_MEAT_MEMORY_TIME, reisen_on_meat_trigger_memory)
+	return inst._reisen_boosted_meat_trigger_count
+end
+
 local function oneat(inst, food)
 	-- Evil petals: +1 lunatic stack per eat.
 	if food ~= nil and REISEN_EVIL_PETALS_FOODS[food.prefab] then
@@ -1420,7 +1554,9 @@ local function oneat(inst, food)
 	-- directly trigger boosted state, bypassing the counter.
 	if TheWorld ~= nil and TheWorld.ismastersim
 		and is_heavy_monster_food(food) then
-		reisen_on_booster_applied(inst)
+		-- Keep the eat callback light like pigman's monster-meat trigger;
+		-- the actual state/FX work runs after the eat state has had time to settle.
+		reisen_queue_meat_boost(inst, false)
 		return
 	end
 
@@ -1428,20 +1564,11 @@ local function oneat(inst, food)
 	if TheWorld ~= nil and TheWorld.ismastersim
 		and food ~= nil and food.components ~= nil and food.components.edible ~= nil
 		and not (inst._reisen_lunatic_boosted)
+		and inst._reisen_meat_boost_task == nil
 		and food.components.edible.foodtype == FOODTYPE.MEAT
 		and food.components.edible:GetHealth(inst) < 0 then
-		inst._reisen_boosted_meat_trigger_count = (inst._reisen_boosted_meat_trigger_count or 0) + 1
-		if inst._reisen_boosted_meat_trigger_count >= REISEN_BOOSTED_MONSTER_MEAT_TRIGGER_LIMIT then
-			-- Set boosted flag immediately to prevent race conditions during deferred task.
-			inst._reisen_lunatic_boosted = true
-			-- Defer knockdown and full boost application to next frame to avoid
-			-- stategraph conflict with the eating action.
-			inst:DoTaskInTime(0, function(i)
-				if not i:IsValid() or i:HasTag("playerghost") then return end
-				if i.components.health ~= nil and i.components.health:IsDead() then return end
-				reisen_apply_meat_knockdown(i)
-				reisen_on_booster_applied(i)
-			end)
+		if reisen_add_meat_trigger(inst) >= REISEN_BOOSTED_MONSTER_MEAT_TRIGGER_LIMIT then
+			reisen_queue_meat_boost(inst, true)
 		end
 		return
 	end
@@ -1524,6 +1651,9 @@ local master_postinit = function(inst)
 	inst._reisen_boosted_meat_trigger_count = 0
 	inst._reisen_boost_aura_fx            = nil
 	inst._reisen_boost_move_mult          = nil
+	inst._reisen_meat_boost_task          = nil
+	inst._reisen_meat_boost_pending_knockdown = nil
+	inst._reisen_meat_trigger_forget_task = nil
 	inst._reisen_petal_fx                 = nil
 	inst._reisen_lunatic_decay_task       = nil
 	inst._reisen_boosted_heal_guard       = false
@@ -1625,6 +1755,51 @@ local master_postinit = function(inst)
 		ReisenPerf.Bump("event.healthdelta")
 		reisen_on_healthdelta(i, data)
 	end)
+	inst:ListenForEvent("onremove", function(i)
+		reisen_cancel_meat_boost_queue(i)
+		reisen_cancel_meat_trigger_memory(i)
+	end)
+	inst:ListenForEvent("death", function(i)
+		reisen_apply_equipped_runtime_state(i, "reisen_clear_charm_state")
+		reisen_apply_equipped_runtime_state(i, "reisen_clear_uniform_state")
+		reisen_apply_equipped_runtime_state(i, "reisen_clear_casual_state")
+		if i._reisen_dodge_task ~= nil then
+			i._reisen_dodge_task:Cancel()
+			i._reisen_dodge_task = nil
+		end
+		if i._reisen_lunatic_decay_task ~= nil then
+			i._reisen_lunatic_decay_task:Cancel()
+			i._reisen_lunatic_decay_task = nil
+		end
+		i._reisen_lunatic_stack = 0
+		reisen_clear_boost_runtime(i)
+		if i._reisen_lunatic_net ~= nil then
+			i._reisen_lunatic_net:set(0)
+			i._reisen_lunatic_net_last_value = 0
+		end
+		if i.components.locomotor ~= nil then
+			i.components.locomotor:RemoveExternalSpeedMultiplier(i, REISEN_DODGE_SPEED_KEY)
+			i.components.locomotor:RemoveExternalSpeedMultiplier(i, REISEN_LUNATIC_SPEED_KEY)
+			i.components.locomotor:RemoveExternalSpeedMultiplier(i, REISEN_BOOST_SPEED_KEY)
+		end
+		reisen_set_fullmoon_runtime(i, false, false)
+		if i.components.health ~= nil and i.components.health.externalabsorbmodifiers ~= nil then
+			local ext = i.components.health.externalabsorbmodifiers
+			ext:RemoveModifier(REISEN_VULN_ABSORB_SOURCE, "main")
+			ext:RemoveModifier(REISEN_LUNATIC_VULN_SOURCE, "lunatic")
+		end
+		i._reisen_kill_hp_accum = 0
+		reisen_sync_kill_hp_accum_net(i)
+		i._reisen_cached_tier_idx   = nil
+		i._reisen_cached_light_on   = nil
+		i._reisen_cached_zero_san   = nil
+		i._reisen_cached_weapon_dur = nil
+		i._reisen_cached_high_san   = nil
+		lunatic(i)
+		if i.Light ~= nil then
+			i.Light:Enable(false)
+		end
+	end)
 	inst:ListenForEvent("hungerdelta", function(i)
 		ReisenPerf.Bump("event.hungerdelta")
 		local _t = ReisenPerf.BeginWarn("event.hungerdelta", 2)
@@ -1699,12 +1874,13 @@ local master_postinit = function(inst)
 						inst2._reisen_hidden_hint_cd[cd_key] = now + 10
 					end
 				end
-				if label_allowed and cur_accum > 0 and inst2.components.talker ~= nil then
+				local charge_hint_enabled = TUNING.REISEN_CHARGE_HINT_ENABLED ~= false
+				if charge_hint_enabled and label_allowed and cur_accum > 0 and inst2.components.talker ~= nil then
 					local fmt = STRINGS.REISEN_ACCUM_FMT or "ACCUM: %d/%d"
 					inst2.components.talker:Say(string.format(fmt, cur_accum, REISEN_KILL_HP_ACCUM_CAP), 2.5)
 				end
 				-- When at cap and label was shown: show ACCUM_FULL hint after the label fades (2.5 s delay).
-				if at_cap and label_allowed then
+				if charge_hint_enabled and at_cap and label_allowed then
 					inst2:DoTaskInTime(2.5, function(i2)
 						if i2:IsValid() then
 							reisen_say_hidden_hint(i2, "ANNOUNCE_REISEN_ACCUM_FULL", 10)
@@ -1733,44 +1909,20 @@ local master_postinit = function(inst)
 
 	inst:WatchWorldState("cycles",      function(i) reisen_molt_on_world_cycles(i) end)
 
-	local FULLMOON_LUNACY_KEY = "reisen_fullmoon"
-
-	local function reisen_set_fullmoon_enlightenment(i, enable)
-		local s = i.components.sanity
-		if s ~= nil and s.EnableLunacy ~= nil then
-			s:EnableLunacy(enable, FULLMOON_LUNACY_KEY)
-		end
-	end
-
 	-- Full moon: master_postinit is server-only, no extra ismastersim guard needed.
 	-- TheWorld.state.isfullmoon check prevents the end-of-full-moon callback from triggering.
 	inst:WatchWorldState("isfullmoon", function(i)
 		if TheWorld.state.isfullmoon then
-			reisen_on_booster_applied(i)
-			reisen_set_fullmoon_enlightenment(i, true)
-			if i.components.luckuser ~= nil then
-				i.components.luckuser:SetLuckSource(REISEN_FULLMOON_LUCK, REISEN_FULLMOON_LUCK_KEY)
-			end
+			reisen_set_fullmoon_runtime(i, true, true)
 		else
-			reisen_set_fullmoon_enlightenment(i, false)
-			if i.components.luckuser ~= nil then
-				i.components.luckuser:RemoveLuckSource(REISEN_FULLMOON_LUCK_KEY)
-			end
+			reisen_set_fullmoon_runtime(i, false, false)
 		end
 	end)
 	-- Apply immediately if spawned during a full moon.
 	if TheWorld.state.isfullmoon then
-		reisen_set_fullmoon_enlightenment(inst, true)
-		if inst.components.luckuser ~= nil then
-			inst.components.luckuser:SetLuckSource(REISEN_FULLMOON_LUCK, REISEN_FULLMOON_LUCK_KEY)
-		end
+		reisen_set_fullmoon_runtime(inst, true, true)
 	end
-	-- Reset the negative-MEAT eat counter at the start of each day, matching pigman
-	-- werebeast ResetTriggers on transform (one "charge" period ≈ one day).
 	inst:WatchWorldState("isday", function(i)
-		if TheWorld.state.isday then
-			i._reisen_boosted_meat_trigger_count = 0
-		end
 		lunatic_deferred(i)
 	end)
 	inst:WatchWorldState("isdusk",      function(i) lunatic_deferred(i) end)
@@ -1786,4 +1938,6 @@ local master_postinit = function(inst)
 	return inst
 end
 
-return MakePlayerCharacter("reisen", prefabs, assets, common_postinit, master_postinit, start_inv)
+return MakePlayerCharacter("reisen", prefabs, assets, common_postinit, master_postinit, start_inv),
+	ReisenFX.MakeBoostFxPrefab(),
+	ReisenFX.MakePetalRingPrefab()

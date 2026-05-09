@@ -81,6 +81,7 @@ TAGS ADDED TO ITEM
 --]]
 
 local ReisenUtil = require "reisen_util"
+local ReisenFX = require "reisen_fx"
 
 local CHARM_BANK = "reisenhat"
 local CHARM_BUILD = "reisen_hat"
@@ -581,9 +582,20 @@ end
 -- Equip / unequip logic
 --------------------------------------------------------------------------
 
+local clear_charm_sanity
+local charm_schedule_spawned_tb_removal
+
 local function apply_charm_sanity(inst, owner)
 	local s = owner.components.sanity
 	if s == nil then return end
+	if inst._charm_owner ~= nil and inst._charm_owner ~= owner then
+		clear_charm_sanity(inst, inst._charm_owner)
+	end
+	if owner._reisen_charm_worn and inst._charm_owner == owner then
+		charm_sync_immunity(inst, owner)
+		charm_sync_light(inst)
+		return
+	end
 	owner._reisen_charm_worn = true
 	owner._reisen_charm_immune_active = false
 	s:AddSanityPenalty(inst, CHARM_SANITY_PENALTY)
@@ -609,6 +621,18 @@ local function apply_charm_sanity(inst, owner)
 	end
 	inst:ListenForEvent("attacked", inst._charm_attacked_fn, owner)
 
+	inst._charm_ghost_fn = function(o)
+		charm_cancel_refuel_task(inst)
+		if charm_schedule_spawned_tb_removal ~= nil then
+			charm_schedule_spawned_tb_removal(inst)
+		end
+		clear_charm_sanity(inst, o)
+		if inst.components.fueled ~= nil then
+			inst.components.fueled:StopConsuming()
+		end
+	end
+	inst:ListenForEvent("ms_becameghost", inst._charm_ghost_fn, owner)
+
 	inst._charm_owner = owner
 	charm_sync_immunity(inst, owner)
 	-- charm_sync_light registers the sanitydelta listener only when a Shadow
@@ -616,8 +640,19 @@ local function apply_charm_sanity(inst, owner)
 	charm_sync_light(inst)
 end
 
-local function clear_charm_sanity(inst, owner)
-	if not (owner ~= nil and owner._reisen_charm_worn) then return end
+clear_charm_sanity = function(inst, owner)
+	if owner == nil then
+		owner = inst._charm_owner
+	end
+	if owner == nil then return end
+	local had_charm_state = owner._reisen_charm_worn
+		or owner._reisen_charm_immune_active
+		or owner._reisen_charm_snap ~= nil
+		or inst._charm_owner == owner
+		or inst._charm_attacked_fn ~= nil
+		or inst._charm_hunger_fn ~= nil
+		or inst._charm_ghost_fn ~= nil
+	if not had_charm_state then return end
 
 	-- Removes both the light fx and its sanitydelta listener (co-extensive lifetimes).
 	charm_remove_light_fx(inst)
@@ -628,17 +663,22 @@ local function clear_charm_sanity(inst, owner)
 		inst._charm_attacked_fn = nil
 	end
 
+	if inst._charm_ghost_fn ~= nil then
+		inst:RemoveEventCallback("ms_becameghost", inst._charm_ghost_fn, owner)
+		inst._charm_ghost_fn = nil
+	end
+
 	if owner.prefab ~= "reisen" then
 		if inst._charm_hunger_fn ~= nil then
 			inst:RemoveEventCallback("hungerdelta", inst._charm_hunger_fn, owner)
 			inst._charm_hunger_fn = nil
 		end
 		charm_remove_immunity(inst, owner)
-		owner._reisen_charm_snap = nil
 	end
 
 	owner._reisen_charm_worn = false
 	owner._reisen_charm_immune_active = nil
+	owner._reisen_charm_snap = nil
 	inst._charm_tb_spawn_cd = nil
 
 	local s = owner.components.sanity
@@ -661,6 +701,7 @@ local function opentop_onequip(inst, owner)
 	if inst.components.fueled ~= nil then
 		inst.components.fueled:StartConsuming()
 	end
+	charm_cancel_refuel_task(inst)
 	inst._charm_refuel_task = inst:DoPeriodicTask(CHARM_FUEL_CHECK_PERIOD, charm_auto_refuel_tick)
 	charm_auto_refuel_tick(inst)  -- immediate check on equip
 	apply_charm_sanity(inst, owner)
@@ -674,7 +715,7 @@ local function opentop_onequip(inst, owner)
 	end)
 end
 
-local function charm_schedule_spawned_tb_removal(inst)
+charm_schedule_spawned_tb_removal = function(inst)
 	local tbs = inst._charm_spawned_tbs
 	if tbs == nil then return end
 	inst._charm_spawned_tbs = nil
@@ -778,6 +819,34 @@ local function fn()
 	inst.components.equippable:SetOnUnequip(opentop_onunequip)
 	inst.components.equippable:SetOnEquipToModel(onequiptomodel)
 
+	inst.reisen_clear_charm_state = function(i, owner)
+		charm_cancel_refuel_task(i)
+		charm_schedule_spawned_tb_removal(i)
+		clear_charm_sanity(i, owner)
+		if i.components.fueled ~= nil then
+			i.components.fueled:StopConsuming()
+		end
+	end
+
+	inst.reisen_apply_charm_state = function(i, owner)
+		if owner == nil or not owner:IsValid() then return end
+		if i.components.fueled ~= nil then
+			i.components.fueled:StartConsuming()
+		end
+		if i._charm_refuel_task == nil then
+			i._charm_refuel_task = i:DoPeriodicTask(CHARM_FUEL_CHECK_PERIOD, charm_auto_refuel_tick)
+		end
+		charm_auto_refuel_tick(i)
+		apply_charm_sanity(i, owner)
+		clear_hat_swap_visual(owner)
+		i:DoTaskInTime(0, function()
+			clear_hat_swap_visual(owner)
+		end)
+		i:DoTaskInTime(1 / 30, function()
+			clear_hat_swap_visual(owner)
+		end)
+	end
+
 	inst:AddComponent("fueled")
 	inst.components.fueled:InitializeFuelLevel(CHARM_MAX_FUEL)
 	inst.components.fueled.maxfuel = CHARM_MAX_FUEL
@@ -818,4 +887,5 @@ local function fn()
 	return inst
 end
 
-return Prefab("reisen_charm", fn, assets, prefabs)
+return Prefab("reisen_charm", fn, assets, prefabs),
+	ReisenFX.MakeCharmLightFxPrefab()

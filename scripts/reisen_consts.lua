@@ -32,6 +32,7 @@ return {
 	-- Boosted state: extra hunger rate (reisen.lua) and boosted Mind Blowing
 	-- hunger-only cost in modmain use the same multiplier.
 	BOOSTED_HUNGER_MULT = 1.33,
+	BOOSTED_HEAL_BONUS  = 0.5,
 
 	-- ── Release Mind Blowing (right-click heal release) ──────────────────
 	-- Two modes: Mind Blowing (accum > 0) and Slow Field (accum = 0).
@@ -45,17 +46,19 @@ return {
 	-- Self-heal fraction is now dynamic: 1 / damagemultiplier (higher damage → less self-heal).
 	-- RELEASE_HEAL_SELF_FRACTION removed; the fraction is computed at cast time in modmain.lua.
 	RELEASE_HEAL_SANITY_COST  = 5,    -- sanity cost for Mind Blowing
+	RELEASE_HEAL_OUTPUT_MULT  = 0.75,  -- overall self/friend heal output scale
 
 	-- Mind Blowing boosted mode (lunatic boosted active):
 	--   only drains hunger (no sanity), smaller self-heal, separate radius.
 	RELEASE_HEAL_RADIUS_BOOSTED    = 6,   -- AoE radius in boosted mode
 	-- Mind Blowing cast (modmain): accum × BOOSTED_SELF_MULT / damagemultiplier.
 	-- Kill-pool payout on stack zero (reisen.lua reisen_apply_kill_hp_accum): accum × BOOSTED_SELF_MULT only.
-	RELEASE_HEAL_BOOSTED_SELF_MULT = 0.5,
+	-- Release cast applies this to caster self-heal only; friend heal uses FRIEND_HEAL_MULT.
+	RELEASE_HEAL_BOOSTED_SELF_MULT = 0.8,
 	-- (boosted hunger cost uses BOOSTED_HUNGER_MULT above)
 
 	-- Slow Field (accum = 0): distance-based slow, no damage, costs stack.
-	RELEASE_SLOW_SANITY_COST  = 2.5,     -- sanity cost for Slow Field
+	RELEASE_SLOW_SANITY_COST  = 2,     -- sanity cost for Slow Field
 	RELEASE_SLOW_STACK_COST   = 1,     -- lunatic stacks consumed per Slow Field cast
 	RELEASE_SLOW_MULT         = 0.5,   -- speed multiplier at outer radius (50% speed = 50% slow)
 	RELEASE_SLOW_MULT_NEAR    = 0.25,  -- speed multiplier at inner radius (5% speed = 95% slow)
@@ -107,7 +110,7 @@ return {
 	-- ── Friend heal (Mind Blowing / Moon Port MODE A) ────────────────────
 	-- Each friendly player inside the AoE (excluding the caster, who already
 	-- self-heals once outside the loop) receives:
-	--   accum * self_heal_frac * RELEASE_HEAL_FRIEND_HEAL_MULT
+	--   accum * base_heal_frac * RELEASE_HEAL_FRIEND_HEAL_MULT
 	-- Independent of TheNet:GetPVPEnabled(): in PvP, only allies (those that
 	-- combat:CanTarget cannot target) are healed; hostile players take damage.
 	RELEASE_HEAL_FRIEND_HEAL_MULT  = 0.5,

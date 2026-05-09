@@ -211,6 +211,12 @@ local function uniform_after_time_drain(inst)
 end
 
 local function apply_uniform_stats(inst, owner)
+	if owner._reisen_uniform_worn and inst._reisen_uniform_owner == owner then
+		uniform_update_sanity_penalty(inst, owner)
+		uniform_update_knockback_immune(inst, owner)
+		uniform_update_walkspeed(inst, owner)
+		return
+	end
 	uniform_update_sanity_penalty(inst, owner)
 	owner._reisen_uniform_worn = true
 	inst._reisen_uniform_owner = owner
@@ -297,6 +303,7 @@ local function onequip(inst, owner)
 		owner.AnimState:OverrideSymbol("swap_body", REISEN_UNIFORM_BUILD, "swap_body")
 	end
 
+	inst:RemoveEventCallback("blocked", OnBlocked, owner)
 	inst:ListenForEvent("blocked", OnBlocked, owner)
 	uniform_sync_fueled_from_armor(inst)
 	apply_uniform_stats(inst, owner)
@@ -385,6 +392,26 @@ local function fn()
 	-- set here.
 	inst.components.equippable:SetOnEquip(onequip)
 	inst.components.equippable:SetOnUnequip(onunequip)
+
+	inst.reisen_clear_uniform_state = function(i, owner)
+		owner = owner or i._reisen_uniform_owner
+		if owner == nil then return end
+		i:RemoveEventCallback("blocked", OnBlocked, owner)
+		clear_uniform_stats(i, owner)
+		if i.components.fueled ~= nil then
+			i.components.fueled:StopConsuming()
+		end
+	end
+
+	inst.reisen_apply_uniform_state = function(i, owner)
+		if owner == nil or not owner:IsValid() then return end
+		i:RemoveEventCallback("blocked", OnBlocked, owner)
+		i:ListenForEvent("blocked", OnBlocked, owner)
+		apply_uniform_stats(i, owner)
+		if i.components.fueled ~= nil then
+			i.components.fueled:StartConsuming()
+		end
+	end
 
 	inst:AddComponent("shadowlevel")
 	inst.components.shadowlevel:SetDefaultLevel(TUNING.ARMOR_SANITY_SHADOW_LEVEL)

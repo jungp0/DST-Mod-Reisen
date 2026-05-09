@@ -70,6 +70,7 @@ local function onequip(inst, owner)
 		owner.AnimState:OverrideSymbol("swap_body", REISEN_CASUAL_BUILD, "swap_body")
 	end
 
+	inst:RemoveEventCallback("blocked", OnBlocked, owner)
 	inst:ListenForEvent("blocked", OnBlocked, owner)
 
 	if owner.prefab == "reisen" then
@@ -140,6 +141,26 @@ local function fn()
 	inst.components.equippable.dapperfn = casual_dapperfn
 	inst.components.equippable:SetOnEquip(onequip)
 	inst.components.equippable:SetOnUnequip(onunequip)
+
+	inst.reisen_clear_casual_state = function(i, owner)
+		if owner == nil then
+			owner = i.components.inventoryitem ~= nil and i.components.inventoryitem.owner or nil
+		end
+		if owner == nil then return end
+		i:RemoveEventCallback("blocked", OnBlocked, owner)
+		if owner.prefab == "reisen" then
+			owner:PushEvent("reisen_stats_dirty")
+		end
+	end
+
+	inst.reisen_apply_casual_state = function(i, owner)
+		if owner == nil or not owner:IsValid() then return end
+		i:RemoveEventCallback("blocked", OnBlocked, owner)
+		i:ListenForEvent("blocked", OnBlocked, owner)
+		if owner.prefab == "reisen" then
+			owner:PushEvent("reisen_stats_dirty")
+		end
+	end
 
 	MakeHauntableLaunch(inst)
 

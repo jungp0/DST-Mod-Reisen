@@ -5,13 +5,11 @@ PrefabFiles = {
 	"reisen_casual",
 	"reisen_uniform",
 	"reisen_charm",
-	"reisen_charmlightfx",
 	"reisen_ointment",
-	"reisen_ointmentfx",
-	"reisen_boostfx",
-	"reisen_petalring",
 
 }
+
+TUNING.REISEN_CHARGE_HINT_ENABLED = GetModConfigData("charge_hint") ~= false
 
 Assets = {
 
@@ -260,6 +258,34 @@ end
 local function ReisenShouldSuppressSanitySound()
 	return IsReisenCharacter() or ReisenCharmImmunityActive()
 end
+
+local function ReisenIsValidOintmentGestaltTarget(target)
+	return target ~= nil
+		and target:IsValid()
+		and target.components ~= nil
+		and target.components.health ~= nil
+		and not target.components.health:IsDead()
+		and not target:HasTag("playerghost")
+		and target.entity:IsVisible()
+end
+
+AddComponentPostInit("brightmarespawner", function(spawner)
+	local _FindBestPlayer = spawner.FindBestPlayer
+	spawner.FindBestPlayer = function(self, gestalt)
+		if gestalt ~= nil and gestalt._reisen_ointment_bound then
+			local target = gestalt._reisen_ointment_target
+			if ReisenIsValidOintmentGestaltTarget(target) then
+				return target, 3
+			end
+			gestalt._reisen_ointment_target = nil
+			if gestalt.components ~= nil and gestalt.components.combat ~= nil then
+				gestalt.components.combat:DropTarget()
+			end
+			return nil, 0
+		end
+		return _FindBestPlayer(self, gestalt)
+	end
+end)
 
 local function ReisenShouldSuppressFramework()
 	return ReisenCharmImmunityActive()
@@ -564,6 +590,34 @@ AddComponentPostInit("sanity", function(sanity)
 		end
 	end)
 
+	inst:ListenForEvent("ms_becameghost", function()
+		stop_shadow_watch()
+		stop_night_spawn()
+		inst._reisen_charm_sane_prev = true
+	end)
+
+	inst:ListenForEvent("ms_respawnedfromghost", function()
+		if inst._reisen_charm_worn then
+			start_shadow_watch()
+			reisen_update_sane()
+		end
+		if is_dualgear_night_eligible() then
+			start_night_spawn()
+		end
+	end)
+
+	inst:ListenForEvent("reisen_equipped_runtime_reapplied", function()
+		if inst._reisen_charm_worn then
+			start_shadow_watch()
+			reisen_update_sane()
+		end
+		if is_dualgear_night_eligible() then
+			start_night_spawn()
+		else
+			stop_night_spawn()
+		end
+	end)
+
 	inst:WatchWorldState("isfullmoon", function()
 		if inst._reisen_charm_worn then
 			reisen_update_sane()
@@ -607,6 +661,31 @@ if not TheNet:IsDedicated() then
 		self.reisen_sanitydots = self:AddChild(ReisenSanityDots(self.owner))
 		self.reisen_sanitydots:Show()
 
+		local function SetReisenBadgeGhostMode(ghostmode)
+			if self.reisen_lunarbadge ~= nil then
+				if ghostmode then
+					self.reisen_lunarbadge:Hide()
+				else
+					self.reisen_lunarbadge:Show()
+				end
+			end
+			if self.reisen_sanitydots ~= nil then
+				if ghostmode then
+					self.reisen_sanitydots:Hide()
+				else
+					self.reisen_sanitydots:Show()
+				end
+			end
+		end
+
+		local OldSetGhostMode = self.SetGhostMode
+		function self:SetGhostMode(ghostmode, ...)
+			OldSetGhostMode(self, ghostmode, ...)
+			SetReisenBadgeGhostMode(ghostmode)
+		end
+
+		SetReisenBadgeGhostMode(self.isghostmode)
+
 		-- Defer positioning until all other mods' AddClassPostConstruct callbacks
 		-- have run.  Combined Status (workshop-376333686) always writes
 		-- GLOBAL.TUNING.COMBINED_STATUS_UNIT regardless of its config, so we
@@ -630,6 +709,7 @@ if not TheNet:IsDedicated() then
 			if self.reisen_sanitydots ~= nil then
 				self.reisen_sanitydots:SetPosition(bx - 41, by, bz)
 			end
+			SetReisenBadgeGhostMode(self.isghostmode)
 		end)
 	end)
 
@@ -918,7 +998,7 @@ AddCharacterRecipe(
 	{
 		Ingredient("spidergland", 4),
 		Ingredient("silk", 3),
-		Ingredient("petals_evil", 1),
+		Ingredient("petals_evil_dried", 1),
 	},
 	TECH.MAGIC_TWO,
 	{
@@ -1047,8 +1127,33 @@ scrapbookdata["reisen_ointment"] = {
 
 AddMinimapAtlas("images/map_icons/reisen.xml")
 
+local function reisen_apply_equipped_item_state(inst, fn_name)
+	local inv = inst ~= nil and inst.components ~= nil and inst.components.inventory or nil
+	if inv == nil then return end
+	local slots = { EQUIPSLOTS.HEAD, EQUIPSLOTS.BODY }
+	for _, slot in ipairs(slots) do
+		local item = inv:GetEquippedItem(slot)
+		if item ~= nil and item[fn_name] ~= nil then
+			item[fn_name](item, inst)
+		end
+	end
+end
+
 AddPlayerPostInit(function(inst)
 	inst._reisen_dualgear_hint_active = false
+	inst:ListenForEvent("ms_becameghost", function(i)
+		i._reisen_dualgear_hint_active = false
+		reisen_apply_equipped_item_state(i, "reisen_clear_charm_state")
+		reisen_apply_equipped_item_state(i, "reisen_clear_uniform_state")
+		reisen_apply_equipped_item_state(i, "reisen_clear_casual_state")
+	end)
+	inst:ListenForEvent("ms_respawnedfromghost", function(i)
+		reisen_apply_equipped_item_state(i, "reisen_apply_charm_state")
+		reisen_apply_equipped_item_state(i, "reisen_apply_uniform_state")
+		reisen_apply_equipped_item_state(i, "reisen_apply_casual_state")
+		i._reisen_dualgear_hint_active = is_reisen_dualgear_equipped(i)
+		i:PushEvent("reisen_equipped_runtime_reapplied")
+	end)
 	inst:ListenForEvent("equip", function(i, data)
 		if data ~= nil and data.item ~= nil
 			and (data.item.prefab == "reisen_uniform" or data.item.prefab == "reisen_charm") then
@@ -1093,6 +1198,14 @@ local function _dualgear_shadow_stack_expire(inst)
 	inst._reisen_dualgear_shadow_stacks = 0
 end
 
+local function _dualgear_shadow_stack_clear(inst)
+	if inst._reisen_dualgear_shadow_task ~= nil then
+		inst._reisen_dualgear_shadow_task:Cancel()
+		inst._reisen_dualgear_shadow_task = nil
+	end
+	inst._reisen_dualgear_shadow_stacks = 0
+end
+
 AddPlayerPostInit(function(inst)
 	-- Capture any bonusdamagefn the prefab constructor already set (Reisen crit fn).
 	-- This runs after the character's fn(), so the existing fn is already in place.
@@ -1116,6 +1229,9 @@ AddPlayerPostInit(function(inst)
 
 	inst._reisen_dualgear_shadow_stacks = 0
 	inst._reisen_dualgear_shadow_task   = nil
+
+	inst:ListenForEvent("ms_becameghost", _dualgear_shadow_stack_clear)
+	inst:ListenForEvent("death", _dualgear_shadow_stack_clear)
 
 	inst:ListenForEvent("onhitother", function(i, data)
 		if not (GLOBAL.TheWorld ~= nil and GLOBAL.TheWorld.ismastersim) then return end
@@ -1235,6 +1351,8 @@ local REISEN_RELEASE_HEAL_RADIUS_BOOSTED     = ReisenConsts.RELEASE_HEAL_RADIUS_
 local REISEN_RELEASE_HEAL_FEAR_DURATION        = ReisenConsts.RELEASE_HEAL_FEAR_DURATION
 local REISEN_RELEASE_HEAL_SANITY_COST        = ReisenConsts.RELEASE_HEAL_SANITY_COST
 local REISEN_BOOSTED_HUNGER_MULT             = ReisenConsts.BOOSTED_HUNGER_MULT
+local REISEN_BOOSTED_HEAL_BONUS              = ReisenConsts.BOOSTED_HEAL_BONUS
+local REISEN_RELEASE_HEAL_OUTPUT_MULT        = ReisenConsts.RELEASE_HEAL_OUTPUT_MULT
 local REISEN_RELEASE_HEAL_BOOSTED_SELF_MULT  = ReisenConsts.RELEASE_HEAL_BOOSTED_SELF_MULT
 local REISEN_RELEASE_SLOW_SANITY_COST   = ReisenConsts.RELEASE_SLOW_SANITY_COST
 local REISEN_RELEASE_SLOW_STACK_COST    = ReisenConsts.RELEASE_SLOW_STACK_COST
@@ -1243,6 +1361,7 @@ local REISEN_RELEASE_SLOW_MULT_NEAR     = ReisenConsts.RELEASE_SLOW_MULT_NEAR
 local REISEN_RELEASE_SLOW_DURATION      = ReisenConsts.RELEASE_SLOW_DURATION
 local REISEN_RELEASE_HEAL_ACCUM_CAP          = ReisenConsts.RELEASE_HEAL_ACCUM_CAP
 local REISEN_LUNATIC_MAX                     = ReisenConsts.LUNATIC_MAX
+local REISEN_LUNATIC_STACK_HI                = ReisenConsts.LUNATIC_STACK_HI
 local REISEN_BOOSTED_AUTO_COLLECT_RADIUS     = ReisenConsts.BOOSTED_AUTO_COLLECT_RADIUS
 local REISEN_PVP_ENABLE_DAMAGE               = ReisenConsts.PVP_ENABLE_DAMAGE
 local REISEN_PVP_ENABLE_SLOW                 = ReisenConsts.PVP_ENABLE_SLOW
@@ -1701,14 +1820,20 @@ local function ReisenDoReleaseHeal(act)
         if doer._reisen_kill_hp_accum_net ~= nil then doer._reisen_kill_hp_accum_net:set(0) end
 
         local dmg_mult = math.max((doer.components.combat ~= nil and doer.components.combat.damagemultiplier) or 1, 0.01)
-        local self_heal_frac = is_boosted and (REISEN_RELEASE_HEAL_BOOSTED_SELF_MULT / dmg_mult) or (1 / dmg_mult)
+        local base_heal_frac = REISEN_RELEASE_HEAL_OUTPUT_MULT / dmg_mult
+        local self_heal_frac = base_heal_frac
+        if is_boosted then
+            self_heal_frac = self_heal_frac
+                * REISEN_RELEASE_HEAL_BOOSTED_SELF_MULT
+                / (1 + REISEN_BOOSTED_HEAL_BONUS)
+        end
         if doer.components.health ~= nil then
             doer.components.health:DoDelta(accum * self_heal_frac, true)
         end
 
-        local friend_heal_amount = accum * self_heal_frac * REISEN_RELEASE_HEAL_FRIEND_HEAL_MULT
+        local friend_heal_amount = accum * base_heal_frac * REISEN_RELEASE_HEAL_FRIEND_HEAL_MULT
         local any_killed = ReisenDoMindBlowingAoE(doer, tx, tz, accum, is_boosted, friend_heal_amount)
-        if accum >= REISEN_RELEASE_HEAL_ACCUM_CAP then
+        if accum >= REISEN_RELEASE_HEAL_ACCUM_CAP and stack > REISEN_LUNATIC_STACK_HI then
             doer:PushEvent("reisen_boost_triggered")
         end
 
@@ -2016,7 +2141,7 @@ end
 
 -- Callback executed after MOONPORT_BLINK_DELAY; performs the actual teleport
 -- and AoE effects. Called via DoTaskInTime to decouple from animation frames.
-local function ReisenMoonPortOnBlinked(doer, tx, tz, accum, is_boosted, moonport_friend_heal)
+local function ReisenMoonPortOnBlinked(doer, tx, tz, accum, is_boosted, moonport_friend_heal, boost_trigger_stack)
     if doer == nil or not doer:IsValid() then return end
 
     -- Call stategraph callback to restore visibility and remove invincibility.
@@ -2046,7 +2171,7 @@ local function ReisenMoonPortOnBlinked(doer, tx, tz, accum, is_boosted, moonport
     -- AoE at destination.
     if accum > 0 then
         ReisenDoMindBlowingAoE(doer, tx, tz, accum, is_boosted, moonport_friend_heal)
-        if accum >= REISEN_RELEASE_HEAL_ACCUM_CAP then
+        if accum >= REISEN_RELEASE_HEAL_ACCUM_CAP and (boost_trigger_stack or 0) > REISEN_LUNATIC_STACK_HI then
             doer:PushEvent("reisen_boost_triggered")
         end
         _reisen_dbg("[REISEN] MoonPort: MODE A done")
@@ -2129,9 +2254,15 @@ local function ReisenDoMoonPort(act)
         if doer._reisen_kill_hp_accum_net ~= nil then doer._reisen_kill_hp_accum_net:set(0) end
         if stack > 0 and doer.components.health ~= nil then
             local dmg_mult = math.max((doer.components.combat ~= nil and doer.components.combat.damagemultiplier) or 1, 0.01)
-            local self_heal_frac = is_boosted and (REISEN_RELEASE_HEAL_BOOSTED_SELF_MULT / dmg_mult) or (1 / dmg_mult)
+            local base_heal_frac = REISEN_RELEASE_HEAL_OUTPUT_MULT / dmg_mult
+            local self_heal_frac = base_heal_frac
+            if is_boosted then
+                self_heal_frac = self_heal_frac
+                    * REISEN_RELEASE_HEAL_BOOSTED_SELF_MULT
+                    / (1 + REISEN_BOOSTED_HEAL_BONUS)
+            end
             doer.components.health:DoDelta(accum * self_heal_frac, true)
-            moonport_friend_heal = accum * self_heal_frac * REISEN_RELEASE_HEAL_FRIEND_HEAL_MULT
+            moonport_friend_heal = accum * base_heal_frac * REISEN_RELEASE_HEAL_FRIEND_HEAL_MULT
         end
     end
 
@@ -2155,7 +2286,7 @@ local function ReisenDoMoonPort(act)
     end
 
     -- Schedule the actual teleport after MOONPORT_BLINK_DELAY.
-    doer:DoTaskInTime(MOONPORT_BLINK_DELAY, ReisenMoonPortOnBlinked, tx, tz, accum, is_boosted, moonport_friend_heal)
+    doer:DoTaskInTime(MOONPORT_BLINK_DELAY, ReisenMoonPortOnBlinked, tx, tz, accum, is_boosted, moonport_friend_heal, stack)
 
     _reisen_dbg("[REISEN] MoonPort: blink scheduled – returning true")
     return true
@@ -2382,4 +2513,3 @@ AddComponentAction("SCENE", "sanity", function(inst, doer, actions, right)
         table.insert(actions, GLOBAL.ACTIONS.REISEN_STATS)
     end
 end)
-
