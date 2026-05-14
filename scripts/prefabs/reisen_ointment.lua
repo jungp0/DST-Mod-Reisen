@@ -51,7 +51,7 @@ local OINTMENT_BANK  = "reisenointment"
 local OINTMENT_BUILD = "reisen_ointment"
 local ReisenFX = require "reisen_fx"
 
--- 4 real-time minutes
+-- 8 real-time minutes
 local BUFF_DURATION = 480
 
 local assets =

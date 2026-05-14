@@ -192,15 +192,15 @@ local REISEN_SANITY_TIERS = {
     -- san 50–75 ── Mid: slight vulnerability
     { san_min=50, dmg=1.25, vuln=-0.50, walk=1.50, run=1.50, neg_aura=1.5, night_drain=1.5,  hunger=1.00, dapper=-0.85, light=nil },
     -- san 25–50 ── Low: light appears, stronger vuln
-    { san_min=25, dmg=1.50, vuln=-0.75, walk=1.40, run=1.40, neg_aura=2.0, night_drain=1.5,  hunger=1.15, dapper=-0.85, light={r=2.5, fo=0.8, it=0.4} },
+    { san_min=25, dmg=1.50, vuln=-0.75, walk=1.40, run=1.40, neg_aura=2.0, night_drain=1.5,  hunger=1.15, dapper=-0.85, light={r=2, fo=0.75, it=0.4} },
     -- san 0–25  ── Critical: heavy drain, red eyes
-    { san_min=0,  dmg=1.75, vuln=-1.00, walk=1.35, run=1.35, neg_aura=2.0, night_drain=2.0,  hunger=1.30, dapper=-0.85, light={r=5, fo=0.6, it=0.5} },
+    { san_min=0,  dmg=1.75, vuln=-1.00, walk=1.35, run=1.35, neg_aura=2.0, night_drain=2.0,  hunger=1.30, dapper=-0.85, light={r=4, fo=0.80, it=0.5} },
 }
 -- san == 0 exact ── Lunatic floor: maximum penalty; bonus regen when well-fed.
 local REISEN_SANITY_TIER_ZERO = {
     dmg=2.00, vuln=-1.25, walk=1.30, run=1.30, neg_aura=3.0, night_drain=3.0,
     hunger=1.50, dapper=-2.00,
-    light = { r=8, fo=0.4, it=0.6 },
+    light = { r=6, fo=0.85, it=0.6 },
     -- When hunger > hunger_high_thresh × max: extra hunger drain.
     -- HP regen at this tier is handled by DoPeriodicTask (REISEN_ZERO_SAN_REGEN_HP_PER_S)(160hp at 1.33x1.5 hunger rate).
     hunger_high_thresh      = ReisenConsts.HUNGER_HIGH,

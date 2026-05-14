@@ -103,8 +103,8 @@ local ReisenPerf = require "reisen_perf"
 local ReisenUtil = require "reisen_util"
 
 -- Register the 3-slot fuel container for reisen_charm.
---   Slot 1 : nightmarefuel only   (+25 % maxfuel, refuel at < 75 %)
---   Slot 2 : horrorfuel only      (+50 % maxfuel, refuel at < 50 %)
+--   Slot 1 : nightmarefuel — fill fraction & auto-refuel thresholds in prefab constants
+--   Slot 2 : horrorfuel      — restores 2x nightmare per stack at same fuel tuning
 --   Slot 3 : shadowheart / shadowheart_infused (passive — not fuel)
 local _charm_containers = require("containers")
 local _V3 = GLOBAL.Vector3
@@ -879,7 +879,7 @@ STRINGS.SCRAPBOOK = STRINGS.SCRAPBOOK or {}
 STRINGS.SCRAPBOOK.SPECIALINFO = STRINGS.SCRAPBOOK.SPECIALINFO or {}
 STRINGS.SCRAPBOOK.SPECIALINFO.REISEN_CASUAL = "Sanity restore is conditional: only active when hunger is above 75%."
 STRINGS.SCRAPBOOK.SPECIALINFO.REISEN_UNIFORM = "Slightly increases movement speed; hunger depletes faster. While worn, reduces max sanity by 25%, worsening to 50% as durability drops. Successful attacks cost a small amount of sanity. At 0 sanity, movement speed increases further and you are immune to knockback. Worn with the Lunatic Vision Ribbon, negative events can trigger at night."
-STRINGS.SCRAPBOOK.SPECIALINFO.REISEN_CHARM = "Nightmare Fuel refuels 25%; Horror Fuel refuels for twice the amount. Applies a 50% sanity penalty but blocks all other negative sanity effects. Unequipping costs some durability. When hit, each strike has a chance to summon a Terrorbeak and consume fuel. Suppression ends when surrounded by multiple shadow creatures or when hunger is depleted. Has three built-in storage slots; automatically consumes stored fuel to restore durability. Placing a Shadow Atrium or Possessed Shadow Atrium inside removes negative effects to varying degrees and grants night vision. With a Possessed Shadow Atrium socketed, periodically grants Dark Petals."
+STRINGS.SCRAPBOOK.SPECIALINFO.REISEN_CHARM = "Applies a 50% sanity penalty but blocks all other negative sanity effects. Unequipping costs some durability. When hit, each strike has a chance to summon a Terrorbeak and consume fuel. Suppression ends when surrounded by multiple shadow creatures or when hunger is depleted. Has three built-in storage slots; automatically consumes stored fuel to restore durability. Placing a Shadow Atrium or Possessed Shadow Atrium inside removes negative effects to varying degrees and grants night vision. With a Possessed Shadow Atrium socketed, periodically grants Dark Petals."
 
 STRINGS.NAMES.REISEN_CASUAL = "Moon Rabbit Casual"
 STRINGS.RECIPE_DESC.REISEN_CASUAL = "Soft homewear with modest armor and warmth."
@@ -905,7 +905,7 @@ STRINGS.RECIPE_DESC.PETALS_EVIL_DRIED =
 AddCharacterRecipe(
 	"petals_evil_dried",
 	{
-		Ingredient("nightmarefuel", 4),
+		Ingredient("nightmarefuel", 5),
 		Ingredient("cutgrass", 1),
 	},
 	TECH.MAGIC_THREE,
@@ -997,7 +997,7 @@ AddCharacterRecipe(
 	"reisen_ointment",
 	{
 		Ingredient("spidergland", 4),
-		Ingredient("silk", 3),
+		Ingredient("silk", 4),
 		Ingredient("petals_evil_dried", 1),
 	},
 	TECH.MAGIC_TWO,
@@ -1106,8 +1106,10 @@ scrapbookdata["reisen_charm"] = {
 	fueledmax = TUNING.TOTAL_DAY_TIME * 2,
 	fueledrate = 1,
 	fueledtype1 = "NIGHTMARE",
+	-- Same pattern as vanilla orangeamulet: icon row listing Nightmare Fuel and Pure Horror together.
+	repairitems = {"nightmarefuel", "horrorfuel"},
 	craftingprefab = "reisen",
-	deps = {"nightmarefuel", "petals_evil", "manrabbit_tail", "crow"},
+	deps = {"nightmarefuel", "horrorfuel", "petals_evil", "manrabbit_tail", "crow"},
 	specialinfo = "REISEN_CHARM",
 }
 scrapbookdata["reisen_ointment"] = {

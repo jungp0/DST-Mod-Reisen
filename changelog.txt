@@ -1,6 +1,9 @@
 Reisen Udongein Inaba | Touhou Project
 
-Changelog (Last Update: 10.05.2026 - Version 3.2.4)
+Changelog (Last Update: 14.05.2026 - Version 3.2.5)
+
+Version 3.2.5 - Lunatic Vision Ribbon fuels refuel on clearer per-piece rules with quicker top-ups when stored nightmare or horror fuel is available; hits and unequips chew through charge a little faster, Terrorbeak callouts can fire sooner on a successful roll, and Possessed Shadow Atrium Evil Petals tick on a less frequent, steadier cadence. Socket night-light stages and Reisen’s low-Sanity glow are retuned, and her own charm halo reads softer so others still get a readable pool. Dark Moon Salve costs one more Silk but keeps its Enlightenment bout twice as long; Dried Evil Petals need one more Nightmare Fuel. Lunar Battle Uniform plus the ribbon still rewards shadow swings, but the bonus stacks fall off sooner and top out lower.
+  [中文] 幻视丝带：噩梦/恐怖燃料按更直观的单位回复与自动补给，存量燃料时补得更勤；受击与卸下消耗略快，成功召唤恐怖尖喙的间隔更短，附身暗影心房的邪恶花瓣改为更稳、不那么密的出现节奏。镶嵌夜视光与铃仙低理智光晕重调，铃仙自身看到的丝带光晕略柔、他人仍易辨认范围。暗月药膏多耗 1 份蜘蛛丝，但开悟持续约倍增；风干邪恶花瓣多耗 1 份噩梦燃料。月夜制服配幻视丝带对暗影打击的叠层衰减更快、上限更低。
 
 Version 3.2.4 - Death and revival now cleanly drop boosted, charm, outfit, and badge effects; Release Mind Blowing and Moon Port healing have been retuned for allies and boosted casts. Dark Moon Salve now calls gestalts when struck and only breaks when one reaches you. Charge callouts can be disabled, boosted monster-meat bites feel smoother online, and the mod prefab list is cleaner for console use.
   [中文] 死亡与复活会正确清理强化、饰品、服装与专属徽章效果；释放心灵风暴与月之相位的自身/队友回复重新平衡。暗月药膏受击会召来月灵，只有被月灵击中时才会消失。蓄力喊话可关闭，强化怪物肉触发在联机中更顺畅，控制台可见的 prefab 列表也更干净。
@@ -119,6 +122,6 @@ Version 1.3.5 - Minor tweaks and fixes.
 Version 1.3.6 - Updated for newer versions of the game.
 Version 1.3.8 - Minor tweaks for better compatibility with the "A New Reign" update.
 
-Current Mod Version: [3.2.4]
+Current Mod Version: [3.2.5]
 DST Character Mod created by: Senshimi [https://steamcommunity.com/id/Senshimi/]
 Touhou Project Collection: [http://steamcommunity.com/sharedfiles/filedetails/?id=701414094]

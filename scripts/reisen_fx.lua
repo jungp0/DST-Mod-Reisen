@@ -2,6 +2,12 @@ local ReisenFX = {}
 
 function ReisenFX.MakeCharmLightFxPrefab()
 	local CHARM_LIGHT_COLOUR = { 150 / 255, 146 / 255, 182 / 255 }
+	local REISEN_DIM_FACTOR   = 0.2
+
+	local function is_owner_reisen(inst)
+		local parent = inst.entity:GetParent()
+		return parent ~= nil and parent.prefab == "reisen"
+	end
 
 	local function set_stage(inst, stage, stage_idx)
 		if inst.Light == nil then return end
@@ -12,8 +18,11 @@ function ReisenFX.MakeCharmLightFxPrefab()
 			inst.Light:Enable(false)
 			return
 		end
+		local intensity = is_owner_reisen(inst)
+			and (stage.intensity * REISEN_DIM_FACTOR)
+			or stage.intensity
 		inst.Light:SetRadius(stage.radius)
-		inst.Light:SetIntensity(stage.intensity)
+		inst.Light:SetIntensity(intensity)
 		inst.Light:SetFalloff(stage.falloff)
 		inst.Light:Enable(true)
 	end

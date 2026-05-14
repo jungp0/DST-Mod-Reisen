@@ -121,22 +121,23 @@ local CHARM_FUEL_RATE          = 1
 local CHARM_SANITY_PENALTY     = 0.50
 -- On eligible hit: 10% roll; on success, fuel cost and spawn logic below.
 local CHARM_TERRORBEAK_SPAWN_CHANCE    = 0.10
-local CHARM_TERRORBEAK_DURABILITY_LOSS = 0.10
+local CHARM_TERRORBEAK_DURABILITY_LOSS = 0.20
 -- Min seconds between actual terrorbeak spawns (gates spawn only; not roll/fuel/cull).
-local CHARM_TERRORBEAK_SPAWN_COOLDOWN  = 1.5
+local CHARM_TERRORBEAK_SPAWN_COOLDOWN  = 0.5
 -- Max shadow + nightmare creatures near owner before blocking spawn; over-cap are culled.
 local CHARM_SHADOW_CREATURE_CAP        = 5
 local CHARM_SHADOW_COUNT_RADIUS        = 30
 local CHARM_SHADOW_COUNT_CANT_TAGS     = { "INLIMBO", "FX" }
 local CHARM_SHADOW_COUNT_ONEOF_TAGS    = { "shadowcreature", "nightmarecreature" }
 -- Each real unequip (not equip-to-model) costs 25% of max fuel.
-local CHARM_UNEQUIP_DURABILITY_LOSS = 0.125
+local CHARM_UNEQUIP_DURABILITY_LOSS = 0.20
 -- How often (seconds) the equipped charm checks whether to pull fuel from its container.
-local CHARM_FUEL_CHECK_PERIOD = 5
--- Consume a nightmare fuel piece when currentfuel/maxfuel falls below this ratio.
-local CHARM_REFUEL_THRESHOLD_NIGHTMARE = 0.75
--- Consume a horror fuel piece when currentfuel/maxfuel falls below this ratio.
-local CHARM_REFUEL_THRESHOLD_HORROR   = 0.50
+local CHARM_FUEL_CHECK_PERIOD = 1
+-- Fraction of max fuel one nightmarefuel restores; horrorfuel restores 2x this.
+-- Auto-refuel triggers when current/max falls below (1 - fill for that fuel type).
+local CHARM_NIGHTMARE_FUEL_FILL_RATIO = 0.20
+-- Possessed Shadow Atrium: petals_evil every N consumed fuels; N = round(1 / fill ratio).
+local CHARM_INFUSED_PETALS_PER_FUELS = math.floor((1 / CHARM_NIGHTMARE_FUEL_FILL_RATIO) + 0.5)
 
 -- Effective sanity = HUD-perceived value; canonical impl in scripts/reisen_util.lua.
 local charm_effective_sanity = ReisenUtil.GetEffectiveSanity
@@ -146,11 +147,11 @@ local charm_effective_sanity = ReisenUtil.GetEffectiveSanity
 -- at typical max ~200, so WX / Wicker etc. scale correctly.
 local CHARM_LIGHT_STAGES = {
 	-- eff <= 0
-	{ radius = 2.5, intensity = 0.20, falloff = 0.70 },
+	{ radius = 4.0, intensity = 0.50, falloff = 0.65 },
 	-- 0 < pct <= MEDIUM (formerly abs <= 25 at ~200 max)
-	{ radius = 1.5, intensity = 0.25, falloff = 0.75 },
+	{ radius = 2.0, intensity = 0.50, falloff = 0.75 },
 	-- MEDIUM < pct <= HIGH (formerly (25, 50])
-	{ radius = 1.0, intensity = 0.30, falloff = 0.85 },
+	{ radius = 1.0, intensity = 0.50, falloff = 0.85 },
 }
 local CHARM_LIGHT_PCT_MEDIUM = 25 / 100
 local CHARM_LIGHT_PCT_HIGH   = 50 / 100
@@ -172,10 +173,6 @@ local function charm_light_stage_for_owner(owner)
 	if pct <= CHARM_LIGHT_PCT_HIGH then return CHARM_LIGHT_STAGES[3], 3 end
 	return nil, 0
 end
-
--- Every two auto-consumed fuel pieces while shadowheart_infused is socketed
--- mints one petals_evil into the wearer's inventory.
-local CHARM_INFUSED_PETALS_PER_FUELS = 2
 
 --------------------------------------------------------------------------
 -- Immunity toggle helpers
@@ -315,7 +312,13 @@ local function charm_consume_one_from_container(inst)
 	if inst.components.fueled == nil then return 0 end
 	local slot, item = charm_find_fuel_slot(inst)
 	if slot == nil then return 0 end
-	local fmult = (item.prefab == "horrorfuel" and 0.50) or 0.25
+	local fmult = nil
+	if item.prefab == "horrorfuel" then
+		fmult = 2 * CHARM_NIGHTMARE_FUEL_FILL_RATIO
+	elseif item.prefab == "nightmarefuel" then
+		fmult = CHARM_NIGHTMARE_FUEL_FILL_RATIO
+	end
+	if fmult == nil then return 0 end
 	local added = inst.components.fueled.maxfuel * fmult
 	local st = item.components.stackable
 	if st ~= nil and st:StackSize() > 1 then
@@ -419,6 +422,9 @@ local function charm_spawn_light_fx(inst, owner)
 		inst:ListenForEvent("iscavenight", inst._charm_phase_fn, TheWorld)
 	end
 	charm_apply_light_stage(inst)
+	if fx.start_ambient_check then
+		fx:start_ambient_check()
+	end
 end
 
 -- Reconcile light fx with current state: spawn if shadowheart present and
@@ -463,20 +469,21 @@ local function charm_collect_shadow_creatures(x, y, z)
 	return ents
 end
 
--- Periodic tick (runs only while equipped): consume one fuel piece when the charge
--- ratio drops below the threshold for the fuel type in the first occupied slot.
---   nightmarefuel: adds 25 % → refuel at < 75 %
---   horrorfuel:    adds 50 % → refuel at < 50 %
+-- Periodic tick (runs only while equipped): refill when ratio < (1 - fill fraction)
+-- for fuel in first slot (nightmare = CHARM_NIGHTMARE_FUEL_FILL_RATIO; horror = 2x).
 local function charm_auto_refuel_tick(inst)
 	if inst.components.fueled == nil or inst.components.container == nil then return end
 	local f = inst.components.fueled
 	local _, item = charm_find_fuel_slot(inst)
 	if item == nil then return end
-	local threshold =
-		(item.prefab == "nightmarefuel" and CHARM_REFUEL_THRESHOLD_NIGHTMARE) or
-		(item.prefab == "horrorfuel"    and CHARM_REFUEL_THRESHOLD_HORROR)    or
-		nil
-	if threshold == nil then return end
+	local fill = nil
+	if item.prefab == "nightmarefuel" then
+		fill = CHARM_NIGHTMARE_FUEL_FILL_RATIO
+	elseif item.prefab == "horrorfuel" then
+		fill = 2 * CHARM_NIGHTMARE_FUEL_FILL_RATIO
+	end
+	if fill == nil then return end
+	local threshold = 1 - fill
 	while f.currentfuel / f.maxfuel < threshold do
 		local added = charm_consume_one_from_container(inst)
 		if added <= 0 then break end
@@ -564,9 +571,9 @@ local function charm_fuel_mult(inst, fuel_obj)
 	local maxf = inst.components.fueled.maxfuel
 	local fv = fuel_obj.components.fuel.fuelvalue
 	if fuel_obj.prefab == "nightmarefuel" then
-		return (0.25 * maxf) / fv
+		return (CHARM_NIGHTMARE_FUEL_FILL_RATIO * maxf) / fv
 	elseif fuel_obj.prefab == "horrorfuel" then
-		return (0.50 * maxf) / fv
+		return (2 * CHARM_NIGHTMARE_FUEL_FILL_RATIO * maxf) / fv
 	end
 	return 1
 end
